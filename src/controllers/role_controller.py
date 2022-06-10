@@ -36,9 +36,9 @@ class ROLEMAC:
         self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
         self.action_repr = th.ones(self.n_actions, self.args.action_latent_dim).to(args.device)
 
+    
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
-        # Only select actions for the selected batch elements in bs
-
+        # Return valid actions (in action space)
         agent_outputs, role_outputs = self.forward(ep_batch, t_ep, test_mode=test_mode, t_env=t_env)
 
         return agent_outputs, role_outputs
