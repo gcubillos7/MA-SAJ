@@ -66,7 +66,8 @@ class RODEMAC:
 
         chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs],
                                                             role_avail_actions[bs], t_env, test_mode=test_mode)
-        return chosen_actions, self.selected_roles, role_avail_actions
+
+        return chosen_actions, self.selected_roles, role_avail_actions # Continua, Discreta
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
         agent_inputs = self._build_inputs(ep_batch, t)
@@ -76,6 +77,7 @@ class RODEMAC:
         role_outputs = None
         if t % self.role_interval == 0:
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
+            # Roles seleccionados se actualizan
             self.selected_roles = self.role_selector.select_role(role_outputs, test_mode=test_mode, t_env=t_env).squeeze()
             # [bs * n_agents]
 
