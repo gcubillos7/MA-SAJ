@@ -64,51 +64,45 @@ class FOP_Learner:
         self.role_critic_params2 = list(self.role_critic2.parameters()) + list(self.role_mixer2.parameters())
 
         self.r_c_optimiser1 = RMSprop(params=self.role_critic_params1, lr=args.c_lr, alpha=args.optim_alpha,
-                                      eps=args.optim_eps)
+                                      eps=args.optim_eps)                         
         self.r_c_optimiser2 = RMSprop(params=self.role_critic_params2, lr=args.c_lr, alpha=args.optim_alpha,
                                       eps=args.optim_eps)
 
+    def get_policy(self, batch):
+        # Get role policy and mac policy
+        mac_out = []
+        role_out = []
+        self.mac.init_hidden(batch.batch_size)
+        for t in range(batch.max_seq_length):
+            agent_outs, role_outs = self.mac.forward(batch, t=t)
+            mac_out.append(agent_outs)
+            if t % self.role_interval == 0 and t < batch.max_seq_length - 1:
+                role_out.append(role_outs)
+        
+        mac_out = th.stack(mac_out, dim=1) 
+        role_out = th.stack(role_out, dim=1)
+
+        # Return output of policy for each agent/role
+        return mac_out, role_out
+
     def train_ma_saj(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities
-        rewards = batch["reward"][:, :-1]
-        actions = batch["actions"][:, :-1]
-        terminated = batch["terminated"][:, :-1].float()
-        mask = batch["filled"][:, :-1].float()
-        mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
-        avail_actions = batch["avail_actions"]
-        roles_shape_o = batch["roles"][:, :-1].shape
-        role_at = int(np.ceil(roles_shape_o[1] / self.role_interval))
-        role_t = role_at * self.role_interval
+  
 
-    def get_policy(self, batch):
-        mac = self.mac
-        mac_out = []
-        mac.init_hidden(batch.batch_size)
-        for t in range(batch.max_seq_length):
-            agent_outs = mac.forward(batch, t=t)
-            mac_out.append(agent_outs)
-        mac_out = th.stack(mac_out, dim=1)
-        return mac_out
+    def train_masaj_actor(self, batch):
 
-    def train_actor(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         bs = batch.batch_size
         max_t = batch.max_seq_length
         terminated = batch["terminated"][:, :-1].float()
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         mask = mask.repeat(1, 1, self.n_agents).view(-1)
-        avail_actions = batch["avail_actions"]
 
         alpha: float = max(0.05, 0.5 - t_env / 200000)  # linear decay
 
-        mac_out, _ = self.get_policy(batch)
+        mac_out, role_out = self.get_policy(batch)
 
-        # Mask out unavailable actions, normalise (as in action selection)
-        mac_out[avail_actions == 0] = 1e-10
-        mac_out = mac_out / mac_out.sum(dim=-1, keepdim=True)
-        mac_out[avail_actions == 0] = 1e-10
 
-        # TODO: Replace by policy
         pi = mac_out[:, :-1].clone()
         pi = pi.reshape(-1, self.n_actions)
         log_pi = th.log(pi)
@@ -124,6 +118,7 @@ class FOP_Learner:
         # policy target for discrete actions (from Soft Actor-Critic for Discrete Action Settings)
         pol_target = (pi * (alpha * log_pi - q_vals[:, :-1].reshape(-1, self.n_actions))).sum(dim=-1)
 
+
         policy_loss = (pol_target * mask).sum() / mask.sum()
 
         # Optimise
@@ -138,6 +133,13 @@ class FOP_Learner:
             self.logger.log_stat("pi_max", (pi.max(dim=1)[0] * mask).sum().item() / mask.sum().item(), t_env)
             self.logger.log_stat("alpha", alpha, t_env)
             self.logger.log_stat("ent", entropies.mean().item(), t_env)
+
+   def train_masaj_critic(self, batch):
+    
+
+
+
+
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int, show_demo=False, save_data=None):
         self.train_actor(batch, t_env, episode_num)
