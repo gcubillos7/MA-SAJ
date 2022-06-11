@@ -1,4 +1,4 @@
-from tkinter import N
+#from tkinter import N
 from src.modules.agents import REGISTRY as agent_REGISTRY
 from src.components.action_selectors import REGISTRY as action_REGISTRY
 from src.modules.action_encoders import REGISTRY as action_encoder_REGISTRY
@@ -6,7 +6,7 @@ from src.modules.roles import REGISTRY as role_REGISTRY
 from src.modules.role_selectors import REGISTRY as role_selector_REGISTRY
 import torch as th
 
-import numpy as np
+#import numpy as np
 import copy
 
 
@@ -58,6 +58,7 @@ class ROLEMAC:
             # Get Index of the role of each agent
             self.selected_roles = self.role_selector.select_role(role_outputs, test_mode=test_mode,
                                                                  t_env=t_env).squeeze()
+
             # [bs * n_agents]
 
         # compute individual hidden_states for each agent
