@@ -38,35 +38,46 @@ class FOP_Learner:
         self.target_critic1 = copy.deepcopy(self.critic1)
         self.target_critic2 = copy.deepcopy(self.critic2)
 
-        self.critic_params1 = list(self.critic1.parameters()) + list(self.mixer1.parameters())
+        self.critic_params1 = list(self.critic1.parameters()) + list(self.mixer1.parameters()) + list(self.mixer1.parameters())
         self.critic_params2 = list(self.critic2.parameters()) + list(self.mixer2.parameters())
+        
+        self.value = ValueNet(args)
+        if args.use_role_value:
+            self.role_value = ValueNet(args)
+            self.value_params = list(self.value.parameters()) + list(self.role_value.parameters())
+        else:
+            self.value_params =  list(self.value.parameters())
 
         self.agent_params = list(mac.parameters())
-
-        self.p_optimiser = RMSprop(params=self.agent_params, lr=args.lr, alpha=args.optim_alpha, eps=args.optim_eps)
-        self.c_optimiser1 = RMSprop(params=self.critic_params1, lr=args.c_lr, alpha=args.optim_alpha,
-                                    eps=args.optim_eps)
-        self.c_optimiser2 = RMSprop(params=self.critic_params2, lr=args.c_lr, alpha=args.optim_alpha,
-                                    eps=args.optim_eps)
 
         # Use FOP mixer
         self.role_mixer1 = FOPMixer(args)
         self.role_mixer2 = FOPMixer(args)
 
+        self.role_target_mixer1 = copy.deepcopy(self.role_mixer1)
+        self.role_target_mixer2 = copy.deepcopy(self.role_mixer2)
+
         # Use rnn + dot product --> Q, V using definition
         self.role_critic1 = FOPCritic(scheme, args)
         self.role_critic2 = FOPCritic(scheme, args)
 
-        self.target_role_critic1 = copy.deepcopy(self.role_critic1)
-        self.target_role_critic2 = copy.deepcopy(self.role_critic2)
+        self.role_target_critic1 = copy.deepcopy(self.role_critic1)
+        self.role_target_critic2 = copy.deepcopy(self.role_critic2)
 
         self.role_critic_params1 = list(self.role_critic1.parameters()) + list(self.role_mixer1.parameters())
         self.role_critic_params2 = list(self.role_critic2.parameters()) + list(self.role_mixer2.parameters())
 
-        self.r_c_optimiser1 = RMSprop(params=self.role_critic_params1, lr=args.c_lr, alpha=args.optim_alpha,
+        self.p_optimiser = RMSprop(params= self.agent_params , lr=args.lr, alpha=args.optim_alpha, eps=args.optim_eps)
+        
+        self.c_optimiser1 = RMSprop(params=self.critic_params1 + self.role_critic_params1, lr=args.c_lr, alpha=args.optim_alpha,
+                                    eps=args.optim_eps)
+
+        self.c_optimiser2 = RMSprop(params=self.critic_params2 + self.role_critic_params2, lr=args.c_lr, alpha=args.optim_alpha,
+                                    eps=args.optim_eps)
+
+        self.val_optimiser = RMSprop(params=self.value_params, lr=args.v_lr, alpha=args.optim_alpha,
                                       eps=args.optim_eps)
-        self.r_c_optimiser2 = RMSprop(params=self.role_critic_params2, lr=args.c_lr, alpha=args.optim_alpha,
-                                      eps=args.optim_eps)
+
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         self.train_encoder(batch, t_env)
@@ -98,60 +109,160 @@ class FOP_Learner:
         # Return output of policy for each agent/role
         return mac_out, role_out
 
+    def _get_joint_q_target(self, target_inputs, pi_a, pi_role):
+
+
+        target_q_vals1 = self.target_critic1.forward(target_inputs).detach()
+        target_q_vals2 = self.target_critic2.forward(target_inputs).detach()
+
+        # if not use_role_value
+        # # directly caculate the values by definition
+        # next_vs1 = th.logsumexp(target_q_vals1 / alpha, dim=-1) * alpha
+        # next_vs2 = th.logsumexp(target_q_vals2 / alpha, dim=-1) * alpha
+        
+        next_chosen_qvals1 = th.gather(target_q_vals1, dim=3, index=next_actions).squeeze(3)
+        next_chosen_qvals2 = th.gather(target_q_vals2, dim=3, index=next_actions).squeeze(3)
+        with th.no_grad:
+            value = 
+
+        target_qvals1 = self.target_mixer1(next_chosen_qvals1, states, actions=next_actions_onehot, vs=next_vs1)
+        target_qvals2 = self.target_mixer2(next_chosen_qvals2, states, actions=next_actions_onehot, vs=next_vs2)
+        
+        pass
+
+    def _get_joint_q(self, inputs, pi_a, pi_role):
+
+        # Get Q values
+        q_vals1 = self.critic1.forward(inputs, pi_a) 
+        q_vals2 = self.critic2.forward(inputs, pi_a)
+        
+        
+        if self.args.use_role_value:
+            #inputs = self.role_critic1._build_inputs(batch, bs, max_t)
+            q_vals1_role = self.role_critic1.forward(inputs, pi_role)
+            q_vals2_role = self.role_critic2.forward(inputs, pi_role)
+            q_vals_role = th.min(q_vals1_role, q_vals2_role) # Q(T,a)
+            q_vals_role = q_vals_role[:, :-1]
+            q_vals_role = q_vals_role.reshape(-1)
+        else:  
+
+            q_vals1_role = self.role_critic1.forward(inputs) 
+            q_vals2_role = self.role_critic2.forward(inputs)
+
+            
+            q_vals_role = th.min(q_vals1_role, q_vals2_role) # Q(T) -> q(1),q(2), ...,q(n_roles)
+            q_vals_role = q_vals_role[:, :-1]
+            q_vals_role = q_vals_role.reshape(-1, self.mac.n_roles)
+
+        return q_vals, q_vals_role
+
+    def _get_q_values_no_grad(self, inputs, pi_a, pi_role):
+
+        with th.no_grad():
+            # Get Q values
+            q_vals1 = self.critic1.forward(inputs, pi_a) 
+            q_vals2 = self.critic2.forward(inputs, pi_a)
+            q_vals = th.min(q_vals1, q_vals2) # Q(T,a) -> Q [Batch_size, seq, n_agents]
+            q_vals = q_vals[:, :-1]
+            q_vals = q_vals.reshape(-1)
+
+            if self.args.use_role_value:
+                #inputs = self.role_critic1._build_inputs(batch, bs, max_t)
+                q_vals1_role = self.role_critic1.forward(inputs, pi_role)
+                q_vals2_role = self.role_critic2.forward(inputs, pi_role)
+                q_vals_role = th.min(q_vals1_role, q_vals2_role) # Q(T,a)
+                q_vals_role = q_vals_role[:, :-1]
+                q_vals_role = q_vals_role.reshape(-1)
+            else:
+                q_vals1_role = self.role_critic1.forward(inputs) 
+                q_vals2_role = self.role_critic2.forward(inputs)
+                q_vals_role = th.min(q_vals1_role, q_vals2_role) # Q(T) -> q(1),q(2), ...,q(n_roles)
+                q_vals_role = q_vals_role[:, :-1]
+                q_vals_role = q_vals_role.reshape(-1, self.mac.n_roles)
+
+        return q_vals, q_vals_role
+
     def train_actor(self, batch, t_env):
+        """
+        Update actor and value nets as in SAC (haarjona)
+        https://github.com/haarnoja/sac/blob/master/sac/algos/sac.py  
+        Add regularization term for implicit constraints 
+        Mixer isn't used during policy improvement
+        """
         bs = batch.batch_size
         max_t = batch.max_seq_length
         terminated = batch["terminated"][:, :-1].float()
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         mask = mask.repeat(1, 1, self.n_agents).view(-1)
+        states = batch["state"]
 
         alpha: float = max(0.05, 0.5 - t_env / 200000)  # linear decay
         # [ep_batch.batch_size, max_t, self.n_agents, -1]
         mac_out, role_out = self.get_policy(batch, self.mac)
+        
         # t_mac_out, t_role_out = self.get_policy(batch, self.target_mac)
 
         # select action
         # get log p of actions
         pi_role, log_pi_role = role_out
+
         # [batch.batch_size, max_t, self.n_agents]
         pi_a, log_pi_a = mac_out
 
-        log_pi_a = log_pi_a[:, :-1].clone()
-        log_pi_a = log_pi_a.reshape(-1)  # , self.n_actions)
-        pi_a = pi_a[:, :-1].clone()
-        pi_a = pi_a.reshape(-1)
-        # log_pi = th.log(pi)
-        log_pi_role = log_pi_role[:, :-1].clone()
-        log_pi_role = log_pi_role.reshape(-1)  # , self.n_actions)
-        pi_role = pi_role[:, :-1].clone()
-        pi_role = pi_role.reshape(-1)
-
+        log_pi_a = log_pi_a[:, :-1].clone() # remove end 
+        log_pi_a = log_pi_a.reshape(-1)  
+        pi_a = pi_a[:, :-1]
+        
+        # inputs are shared between v's and q's
         inputs = self.critic1._build_inputs(batch, bs, max_t)
-        q_vals1 = self.critic1.forward(inputs)
-        q_vals2 = self.critic2.forward(inputs)
-        q_vals = th.min(q_vals1, q_vals2) # q_vals_actions -> Q [Batch_size, seq, n_agents]
+        q_vals, q_vals_role = self._get_q_values_no_grad(inputs, pi_a, pi_role)
 
-        inputs = self.role_critic1._build_inputs(batch, bs, max_t)
-        q_vals1_role = self.role_critic1.forward(inputs)
-        q_vals2_role = self.role_critic2.forward(inputs)
-        q_vals_role = th.min(q_vals1_role, q_vals2_role)
-        # q_vals_role -> Q [Batch_size, seq, n_agents] , Q [Batch_size, seq, n_roles, n_agents]
-        # chosen_role_q_vals = th.gather(q_vals_role[:, :-1], dim=3, index=pi_role.long()).squeeze(3)
-        # Remove the last dim
-
+        # Get values for act (is not necessary but it helps with stability)
+        v_actions = self.values(inputs)
+        v_actions = v_actions.reshape(-1)
         entropies = - (th.exp(log_pi_a) * log_pi_a).sum(dim=-1)
 
-        pol_target = (alpha * log_pi_a - q_vals[:, :-1]).sum(dim=-1)
+        act_target = (alpha * log_pi_a - q_vals).sum(dim=-1)
+        v_act_target = (0.5 * (v_actions - (q_vals - alpha * log_pi_a) )**2).sum(dim = -1)
 
-        rol_target = (alpha * log_pi_role - q_vals_role[:, :-1]).sum(dim=-1)
+        # As is Discrete we don't really need a value net as we can estimate V directly
+        if self.args.use_role_value:
+            # Shape is flattened
+            log_pi_role = log_pi_role[:, :-1]
+            log_pi_role = log_pi_role.reshape(-1) 
+            pi_role = pi_role[:, :-1]
+            # Move V towards Q
+            v_role = self.role_values(inputs).reshape(-1)
+            v_role = v_role.reshape(-1)
+            rol_target = (alpha * log_pi_role - q_vals_role).sum(dim=-1)
+            v_role_target = (0.5 * (v_role - (q_vals_role - alpha* log_pi_role) )**2).sum(dim = -1)
+            val_target = v_act_target + v_role_target
+        else:
+            # Get Q for each role
+            log_pi_role_copy = log_pi_role[:, :-1].clone()
+            log_pi_role_copy = log_pi_role_copy.reshape(-1, self.mac.n_roles)
+            pi_role = th.exp(log_pi_role_copy) # Get p instead of log_p
+            log_pi_role = log_pi_role[:, :-1].reshape(-1, self.mac.n_roles)
+            # policy target for discrete actions (from Soft Actor-Critic for Discrete Action Settings)
+            rol_target = (pi_role * (alpha * log_pi_role - q_vals_role[:, :-1].reshape(-1, self.n_roles))).sum(dim=-1)
+            # The val net of roles isn't updated
+            val_target = v_act_target
 
-        target = pol_target + rol_target
-        loss = (target * mask).sum() / mask.sum()
+        pol_target = act_target + rol_target       
+             
+        loss_policy = (pol_target * mask).sum() / mask.sum()
+        loss_value = (val_target * mask).sum() / mask.sum()
 
-        # Optimise
+        # Optimize values
+        self.val_optimiser.zero_grad()
+        loss_policy.backward()
+        agent_grad_norm = th.nn.utils.clip_grad_norm_(self.value_params, self.args.grad_norm_clip)
+        self.val_optimiser.step()
+
+        # Optimize policy
         self.p_optimiser.zero_grad()
-        loss.backward()
+        loss_policy.backward()
         agent_grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
         self.p_optimiser.step()
 
@@ -163,13 +274,21 @@ class FOP_Learner:
             self.logger.log_stat("ent", entropies.mean().item(), t_env)
 
     def train_critic(self, batch, t_env):
-        pass
+        raise NotImplementedError
 
     def _update_targets(self):
         self.target_critic1.load_state_dict(self.critic1.state_dict())
         self.target_critic2.load_state_dict(self.critic2.state_dict())
         self.target_mixer1.load_state_dict(self.mixer1.state_dict())
         self.target_mixer2.load_state_dict(self.mixer2.state_dict())
+
+        self.role_target_critic1.load_state_dict(self.role_critic1.state_dict())
+        self.role_target_critic2.load_state_dict(self.role_critic2.state_dict())
+        self.role_target_mixer1.load_state_dict(self.role_mixer1.state_dict())
+        self.role_target_mixer2.load_state_dict(self.role_mixer2.state_dict())
+
+
+
         self.logger.console_logger.info("Updated target network")
 
     def cuda(self):

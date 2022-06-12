@@ -47,13 +47,13 @@ class ROLEMAC:
 
         agent_inputs = self._build_inputs(ep_batch, t)
 
-        # select roles
+        
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
         role_outputs = None
 
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
-            # Q value for each agent for each role 
+            
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
             # Get Index of the role of each agent
             self.selected_roles = self.role_selector.select_role(role_outputs, test_mode=test_mode,

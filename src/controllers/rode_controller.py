@@ -82,12 +82,16 @@ class RODEMAC:
             # [bs * n_agents]
 
         # compute individual q-values
+        # using hidden_states of each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
         roles_q = []
         for role_i in range(self.n_roles):
+            # pass hidden state through a fc layer and compute dot product with action_repr to get q of each action for each role
             role_q = self.roles[role_i](self.hidden_states, self.action_repr)  # [bs * n_agents, n_actions]
             roles_q.append(role_q)
         roles_q = th.stack(roles_q, dim=1)  # [bs*n_agents, n_roles, n_actions]
+        
+        # get q values of selected_roles
         agent_outs = th.gather(roles_q, 1, self.selected_roles.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, self.n_actions))
         # [bs * n_agents, 1 , 1]
 

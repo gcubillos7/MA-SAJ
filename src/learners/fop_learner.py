@@ -62,7 +62,7 @@ class FOP_Learner:
             agent_outs = mac.forward(batch, t=t)
             mac_out.append(agent_outs)
         mac_out = th.stack(mac_out, dim=1)  # Concat over time
-
+        
         # Mask out unavailable actions, renormalise (as in action selection)
         mac_out[avail_actions == 0] = 1e-10
         mac_out = mac_out / mac_out.sum(dim=-1, keepdim=True)
@@ -167,6 +167,7 @@ class FOP_Learner:
         # Calculate td-lambda targets
         target_v = build_td_lambda_targets(rewards, terminated, mask, target_qvals, self.n_agents, self.args.gamma,
                                            self.args.td_lambda)
+
         targets = target_v - alpha * log_pi_taken.mean(dim=-1, keepdim=True)
 
         inputs = self.critic1._build_inputs(batch, bs, max_t)
