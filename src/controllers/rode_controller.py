@@ -192,6 +192,7 @@ class RODEMAC:
                 inputs.append(th.zeros_like(batch["actions_onehot"][:, t]))
             else:
                 inputs.append(batch["actions_onehot"][:, t-1])
+
         if self.args.obs_agent_id:
             inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1))
 

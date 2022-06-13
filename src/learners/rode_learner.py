@@ -67,6 +67,7 @@ class RODELearner:
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         avail_actions = batch["avail_actions"]
         # role_avail_actions = batch["role_avail_actions"]
+
         roles_shape_o = batch["roles"][:, :-1].shape
         role_at = int(np.ceil(roles_shape_o[1] / self.role_interval))
         role_t = role_at * self.role_interval
@@ -81,7 +82,7 @@ class RODELearner:
         mac_out = []
         role_out = []
         self.mac.init_hidden(batch.batch_size)
-        for t in range(batch.max_seq_length):
+        for t in range(batch.max_seq_length - 1):
             agent_outs, role_outs = self.mac.forward(batch, t=t)
             mac_out.append(agent_outs)
             if t % self.role_interval == 0 and t < batch.max_seq_length - 1:
