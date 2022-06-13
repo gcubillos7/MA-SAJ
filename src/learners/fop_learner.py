@@ -120,6 +120,7 @@ class FOP_Learner:
         mac = self.mac
         mixer1 = self.mixer1
         mixer2 = self.mixer2
+
         alpha = max(0.05, 0.5 - t_env / 200000)  # linear decay
 
         mac_out = []

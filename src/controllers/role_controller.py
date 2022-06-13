@@ -39,14 +39,22 @@ class ROLEMAC:
     
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         # Return valid actions (in action space)
+        avail_actions = ep_batch["avail_actions"][:, t_ep]
+
         agent_outputs, role_outputs = self.forward(ep_batch, t_ep, test_mode=test_mode, t_env=t_env)
+
+        role_avail_actions = th.gather(self.role_action_spaces.unsqueeze(0).repeat(self.n_agents, 1, 1), dim=1,
+                                       index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, self.n_actions).long()).squeeze()
+        role_avail_actions = role_avail_actions.int().view(ep_batch.batch_size, self.n_agents, -1)
+
+        chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs],
+                                                            role_avail_actions[bs], t_env, test_mode=test_mode)
 
         return agent_outputs, role_outputs
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
 
         agent_inputs = self._build_inputs(ep_batch, t)
-
         
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
         role_outputs = None

@@ -1,34 +1,37 @@
+import torch
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-class FOPCritic(nn.Module):
+class MASAJCritic(nn.Module):
     def __init__(self, scheme, args):
-        super(FOPCritic, self).__init__()
+        super(MASAJCritic, self).__init__()
 
         self.args = args
         self.n_actions = args.n_actions
         self.n_agents = args.n_agents
 
-        # obs + n_agents
-        input_shape = self._get_input_shape(scheme)
+        # obs + n_agents + n_actions
+        self.input_shape = self._get_input_shape(scheme) + self.n_actions
         self.output_type = "q"
 
         # Set up network layers
-        self.fc1 = nn.Linear(input_shape, 64)
+        self.fc1 = nn.Linear(self.input_shape, 64)
         self.fc2 = nn.Linear(64, 64)
         self.fc3 = nn.Linear(64, self.n_actions)
 
-    def forward(self, inputs):
+    def forward(self, inputs, actions):
+        if actions is not None:
+            inputs = th.cat([inputs.view(-1, self.input_shape - self.n_actions),
+                             actions.contiguous().view(-1, self.n_actions)], dim=-1)
         x = F.relu(self.fc1(inputs))
         x = F.relu(self.fc2(x))
         q = self.fc3(x)
         return q  # bs, max_t, n_agents, n_actions
 
     def _build_inputs(self, batch, bs, max_t):
-
-        inputs = [batch['obs'][:],
+        inputs = [batch["obs"],
                   th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1)]
         # state, obs, action
 
@@ -45,5 +48,3 @@ class FOPCritic(nn.Module):
         input_shape = scheme["obs"]["vshape"]
         input_shape += self.n_agents
         return input_shape  # [n_agents + n_obs]
-
-# rnn --> dot --> q
