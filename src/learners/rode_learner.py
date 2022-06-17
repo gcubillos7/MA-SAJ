@@ -66,17 +66,19 @@ class RODELearner:
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         avail_actions = batch["avail_actions"]
-        # role_avail_actions = batch["role_avail_actions"]
-
-        roles_shape_o = batch["roles"][:, :-1].shape
+        
+        # Get role transitions from batch
+        roles_shape_o = batch["roles"][:, :-1].shape # bs, t, agents
         role_at = int(np.ceil(roles_shape_o[1] / self.role_interval))
-        role_t = role_at * self.role_interval
+        role_t = role_at * self.role_interval # real size of roles taken (last role could be cut short)
+        roles_shape = list(roles_shape_o)  
+        roles_shape[1] = role_t 
+        roles = th.zeros(roles_shape).to(self.device) 
 
-        roles_shape = list(roles_shape_o)
-        roles_shape[1] = role_t
-        roles = th.zeros(roles_shape).to(self.device)
         roles[:, :roles_shape_o[1]] = batch["roles"][:, :-1]
-        roles = roles.view(batch.batch_size, role_at, self.role_interval, self.n_agents, -1)[:, :, 0]
+        # a convoluted way to get role every self.role_interval     
+        roles = roles.view(batch.batch_size, role_at, self.role_interval, self.n_agents, -1)[:, :, 0] 
+
 
         # Calculate estimated Q-Values
         mac_out = []
@@ -140,6 +142,7 @@ class RODELearner:
             state_shape[1] = role_t
             role_states = th.zeros(state_shape).to(self.device)
             role_states[:, :state_shape_o[1]] = batch["state"][:, :-1].detach().clone()
+            # role_at = int(np.ceil(roles_shape_o[1] / self.role_interval)) 
             role_states = role_states.view(batch.batch_size, role_at,
                                            self.role_interval, -1)[:, :, 0]
             chosen_role_qvals = self.role_mixer(chosen_role_qvals, role_states)

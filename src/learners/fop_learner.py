@@ -38,10 +38,10 @@ class FOP_Learner:
         self.critic_params1 = list(self.critic1.parameters()) + list(self.mixer1.parameters())
         self.critic_params2 = list(self.critic2.parameters()) + list(self.mixer2.parameters())
 
-        self.p_optimiser = RMSprop(params=self.agent_params, lr=args.lr, alpha=args.optim_alpha, eps=args.optim_eps)
-        self.c_optimiser1 = RMSprop(params=self.critic_params1, lr=args.c_lr, alpha=args.optim_alpha,
+        self.p_optimizer = RMSprop(params=self.agent_params, lr=args.lr, alpha=args.optim_alpha, eps=args.optim_eps)
+        self.c_optimizer1 = RMSprop(params=self.critic_params1, lr=args.c_lr, alpha=args.optim_alpha,
                                     eps=args.optim_eps)
-        self.c_optimiser2 = RMSprop(params=self.critic_params2, lr=args.c_lr, alpha=args.optim_alpha,
+        self.c_optimizer2 = RMSprop(params=self.critic_params2, lr=args.c_lr, alpha=args.optim_alpha,
                                     eps=args.optim_eps)
 
     def train_actor(self, batch: EpisodeBatch, t_env: int, episode_num: int):
@@ -86,10 +86,10 @@ class FOP_Learner:
         policy_loss = (pol_target * mask).sum() / mask.sum()
 
         # Optimise
-        self.p_optimiser.zero_grad()
+        self.p_optimizer.zero_grad()
         policy_loss.backward()
         agent_grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
-        self.p_optimiser.step()
+        self.p_optimizer.step()
 
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
             self.logger.log_stat("policy_loss", policy_loss.item(), t_env)
@@ -156,16 +156,16 @@ class FOP_Learner:
         # directly caculate the values by definition
         next_vs1 = th.logsumexp(target_q_vals1 / alpha, dim=-1) * alpha
         next_vs2 = th.logsumexp(target_q_vals2 / alpha, dim=-1) * alpha
-
+        
         next_chosen_qvals1 = th.gather(target_q_vals1, dim=3, index=next_actions).squeeze(3)
         next_chosen_qvals2 = th.gather(target_q_vals2, dim=3, index=next_actions).squeeze(3)
 
         target_qvals1 = self.target_mixer1(next_chosen_qvals1, states, actions=next_actions_onehot, vs=next_vs1)
         target_qvals2 = self.target_mixer2(next_chosen_qvals2, states, actions=next_actions_onehot, vs=next_vs2)
-
+        # [BS, ]
         target_qvals = th.min(target_qvals1, target_qvals2)
 
-        # Calculate td-lambda targets
+        # Calculate td-lambda targets # rewards [BS, T-1] # mask [BS, T-1] # target_qvals [BS, T]
         target_v = build_td_lambda_targets(rewards, terminated, mask, target_qvals, self.n_agents, self.args.gamma,
                                            self.args.td_lambda)
 
@@ -197,15 +197,15 @@ class FOP_Learner:
         loss2 = (masked_td_error2 ** 2).sum() / mask.sum()
 
         # Optimise
-        self.c_optimiser1.zero_grad()
+        self.c_optimizer1.zero_grad()
         loss1.backward()
         grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params1, self.args.grad_norm_clip)
-        self.c_optimiser1.step()
+        self.c_optimizer1.step()
 
-        self.c_optimiser2.zero_grad()
+        self.c_optimizer2.zero_grad()
         loss2.backward()
         grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params2, self.args.grad_norm_clip)
-        self.c_optimiser2.step()
+        self.c_optimizer2.step()
 
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
             self.logger.log_stat("loss", loss1.item(), t_env)
@@ -242,9 +242,9 @@ class FOP_Learner:
         th.save(self.mixer1.state_dict(), "{}/mixer1.th".format(path))
         th.save(self.critic2.state_dict(), "{}/critic2.th".format(path))
         th.save(self.mixer2.state_dict(), "{}/mixer2.th".format(path))
-        th.save(self.p_optimiser.state_dict(), "{}/agent_opt.th".format(path))
-        th.save(self.c_optimiser1.state_dict(), "{}/critic_opt1.th".format(path))
-        th.save(self.c_optimiser2.state_dict(), "{}/critic_opt2.th".format(path))
+        th.save(self.p_optimizer.state_dict(), "{}/agent_opt.th".format(path))
+        th.save(self.c_optimizer1.state_dict(), "{}/critic_opt1.th".format(path))
+        th.save(self.c_optimizer2.state_dict(), "{}/critic_opt2.th".format(path))
 
     def load_models(self, path):
         self.mac.load_models(path)
@@ -257,11 +257,11 @@ class FOP_Learner:
         self.mixer1.load_state_dict(th.load("{}/mixer1.th".format(path), map_location=lambda storage, loc: storage))
         self.mixer2.load_state_dict(th.load("{}/mixer2.th".format(path), map_location=lambda storage, loc: storage))
 
-        self.p_optimiser.load_state_dict(
+        self.p_optimizer.load_state_dict(
             th.load("{}/agent_opt.th".format(path), map_location=lambda storage, loc: storage))
-        self.critic_optimiser1.load_state_dict(
+        self.critic_optimizer1.load_state_dict(
             th.load("{}/critic_opt1.th".format(path), map_location=lambda storage, loc: storage))
-        self.critic_optimiser2.load_state_dict(
+        self.critic_optimizer2.load_state_dict(
             th.load("{}/critic_opt2.th".format(path), map_location=lambda storage, loc: storage))
 
     def build_inputs(self, batch, bs, max_t, actions_onehot):

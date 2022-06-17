@@ -12,7 +12,7 @@ class DotRole(nn.Module):
 
         self.q_fc = nn.Linear(args.rnn_hidden_dim, args.action_latent_dim)
         self.action_space = th.ones(args.n_actions).to(args.device)
-
+        
     def forward(self, h, action_latent):
         role_key = self.q_fc(h)  # [bs, action_latent] [n_actions, action_latent]
         role_key = role_key.unsqueeze(-1)
