@@ -69,13 +69,13 @@ class RODELearner:
         
         # Get role transitions from batch
         roles_shape_o = batch["roles"][:, :-1].shape # bs, t, agents
-        role_at = int(np.ceil(roles_shape_o[1] / self.role_interval))
-        role_t = role_at * self.role_interval # real size of roles taken (last role could be cut short)
-        roles_shape = list(roles_shape_o)  
+        role_at = int(np.ceil(roles_shape_o[1] / self.role_interval)) #  n = ceil(41/4)
+        role_t = role_at * self.role_interval # real size of roles taken (last role could be cut short) # n * 4
+        roles_shape = list(roles_shape_o)
         roles_shape[1] = role_t 
         roles = th.zeros(roles_shape).to(self.device) 
 
-        roles[:, :roles_shape_o[1]] = batch["roles"][:, :-1]
+        roles[:, :roles_shape_o[1]] = batch["roles"][:, :-1] # 41
         # a convoluted way to get role every self.role_interval     
         roles = roles.view(batch.batch_size, role_at, self.role_interval, self.n_agents, -1)[:, :, 0] 
 
@@ -107,6 +107,7 @@ class RODELearner:
                 target_role_out.append(target_role_outs)
 
         target_role_out.append(th.zeros(batch.batch_size, self.n_agents, self.mac.n_roles).to(self.device))
+
         # We don't need the first timesteps Q-Value estimate for calculating targets
         target_mac_out = th.stack(target_mac_out[1:], dim=1)  # Concat across time
         target_role_out = th.stack(target_role_out[1:], dim=1)

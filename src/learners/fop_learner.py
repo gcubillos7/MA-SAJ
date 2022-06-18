@@ -165,10 +165,10 @@ class FOP_Learner:
         # [BS, ]
         target_qvals = th.min(target_qvals1, target_qvals2)
 
-        # Calculate td-lambda targets # rewards [BS, T-1] # mask [BS, T-1] # target_qvals [BS, T]
+        # Calculate td-lambda targets # rewards [BS, T-1] # mask [BS, T-1] # target_q_vals [BS, T]
         target_v = build_td_lambda_targets(rewards, terminated, mask, target_qvals, self.n_agents, self.args.gamma,
                                            self.args.td_lambda)
-
+        # [BS, T-1, n_agents] 
         targets = target_v - alpha * log_pi_taken.mean(dim=-1, keepdim=True)
 
         inputs = self.critic1._build_inputs(batch, bs, max_t)
