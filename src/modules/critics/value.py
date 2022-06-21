@@ -2,39 +2,32 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class MASAJCritic(nn.Module):
+class ValueNet(nn.Module):
     def __init__(self, scheme, args):
-        super(MASAJCritic, self).__init__()
+        super(ValueNet, self).__init__()
 
         self.args = args
         self.n_actions = args.n_actions
         self.n_agents = args.n_agents
 
-        # obs + n_agents + n_actions
-        self.input_shape = self._get_input_shape(scheme) + self.n_actions
-        self.output_type = "q"
+        # obs + n_agents
+        input_shape = self._get_input_shape(scheme)
+        self.output_type = "v"
 
-        self.dim_out = 1 if args.continous_actions else self.n_actions
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
+        self.fc1 = nn.Linear(input_shape, 64)
         self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, self.dim_out)
+        self.fc3 = nn.Linear(64, 1)
 
-    def forward(self, inputs, actions=None):
-        if actions is not None:
-            inputs = th.cat([inputs, actions], dim=-1)
-            # inputs = th.cat([inputs.view(-1, self.input_shape - self.n_actions),
-            #                  actions.view(-1, self.n_actions)], dim=-1)
-
+    def forward(self, inputs):
         x = F.relu(self.fc1(inputs))
         x = F.relu(self.fc2(x))
-        q = self.fc3(x)
-        return q  # bs, max_t, n_agents, (1 if args.continous_actions else self.n_actions)
+        v = self.fc3(x)
+        return v  # bs, max_t, n_agents, n_actions
 
     def _build_inputs(self, batch, bs, max_t):
 
-        inputs = [batch["obs"],
+        inputs = [batch['obs'][:],
                   th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1)]
         # state, obs, action
 
@@ -53,47 +46,36 @@ class MASAJCritic(nn.Module):
         return input_shape  # [n_agents + n_obs]
 
 
-class MASAJRoleCritic(nn.Module):
+class RoleValueNet(nn.Module):
     def __init__(self, scheme, args):
-        super(MASAJRoleCritic, self).__init__()
-
+        super(RoleValueNet, self).__init__()
         self.args = args
         self.n_actions = args.n_actions
-        self.n_roles = args.n_roles
-        self.role_interval = args.n_roles
-        # obs + n_agents
-        self.input_shape = self._get_input_shape(scheme) + self.n_actions
-        self.output_type = "q"
+        self.n_agents = args.n_agents
 
-        self.dim_out = 1 if args.per_role_q else self.n_roles
+        # obs + n_agents
+        input_shape = self._get_input_shape(scheme)
+        self.output_type = "v"
 
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
+        self.fc1 = nn.Linear(input_shape, 64)
         self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, self.dim_out)
+        self.fc3 = nn.Linear(64, 1)
 
-        # TODO: RNN optional
-
-    def forward(self, inputs, roles=None):
-        if roles is not None:  # roles [bs, role_t, n_agents, 1]
-            # [bs, max_t, n_agents, n_agents + n_obs]
-            inputs = th.cat([inputs, roles], dim=-1)  # Similar to ma-saj
+    def forward(self, inputs):
         x = F.relu(self.fc1(inputs))
         x = F.relu(self.fc2(x))
-        q = self.fc3(x)
-
-        return q  # bs, role_t, n_agents, n_actions
+        v = self.fc3(x)
+        return v  # bs, max_t, n_agents, n_actions
 
     def _build_inputs(self, batch, bs, max_t):
         inputs = batch["obs"][:, :-1][:, ::self.role_interval]
+
         # t_role = np.ceil(max_t/self.role_interval)
         t_role = inputs.shape[1]
         inputs = [inputs,
                   th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, t_role, -1, -1)]
         # state, obs, action
-
-        # inputs[0] --> [bs, max_t, n_agents, obs]
-        # inputs[1] --> [bs, max_t, n_agents, n_agents]
 
         # one hot encoded position of agent + state
         inputs = th.cat([x.reshape(bs, t_role, self.n_agents, -1) for x in inputs], dim=-1)
@@ -103,5 +85,5 @@ class MASAJRoleCritic(nn.Module):
     def _get_input_shape(self, scheme):
         # state
         input_shape = scheme["obs"]["vshape"]
-        input_shape += self.n_roles
+        input_shape += self.n_agents
         return input_shape  # [n_agents + n_obs]

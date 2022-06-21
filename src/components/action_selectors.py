@@ -32,8 +32,9 @@ class GumbelSoftmax():
 REGISTRY["gumbel"] = GumbelSoftmax
 '''
 
+
 class MultinomialActionSelector():
-    
+
     def __init__(self, args):
         self.args = args
 
@@ -77,7 +78,6 @@ class EpsilonGreedyActionSelector():
         self.epsilon = self.schedule.eval(0)
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
-
         # Assuming agent_inputs is a batch of Q-Values for each agent bav
         self.epsilon = self.schedule.eval(t_env)
 
@@ -98,3 +98,36 @@ class EpsilonGreedyActionSelector():
 
 
 REGISTRY["epsilon_greedy"] = EpsilonGreedyActionSelector
+
+
+class GaussianActionSelector():
+
+    def __init__(self, args):
+        self.args = args
+        self.test_greedy = getattr(args, "test_greedy", True)
+
+    def select_action(self, mu, sigma, test_mode=False):
+        # expects the following input dimensionalities:
+        # mu: [b x a x u]
+        # sigma: [b x a x u]
+        assert mu.dim() == 3, "incorrect input dim: mu"
+        assert sigma.dim() == 3, "incorrect input dim: sigma"
+        sigma = sigma.view(-1, self.args.n_agents, self.args.n_actions, self.args.n_actions)
+
+        if test_mode and self.test_greedy:
+            picked_actions = mu
+        else:
+            dst = th.distributions.MultivariateNormal(mu.view(-1,
+                                                              mu.shape[-1]),
+                                                      sigma.view(-1,
+                                                                 mu.shape[-1],
+                                                                 mu.shape[-1]))
+            try:
+                picked_actions = dst.sample().view(*mu.shape)
+            except Exception as e:
+                a = 5
+                pass
+        return picked_actions
+
+
+REGISTRY["gaussian"] = GaussianActionSelector
