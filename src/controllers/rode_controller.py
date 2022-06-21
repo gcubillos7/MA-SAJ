@@ -24,7 +24,6 @@ import copy
 #      |-> Decoder -> A
 # A -> Z -> C -> (r, st1)
 
-
 # This multi-agent controller shares parameters between agents
 class RODEMAC:
     def __init__(self, scheme, groups, args):
@@ -84,6 +83,7 @@ class RODEMAC:
         # compute individual q-values
         # using hidden_states of each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
+
         roles_q = []
         for role_i in range(self.n_roles):
             # pass hidden state through a fc layer and compute dot product with action_repr to get q of each action for each role

@@ -1,5 +1,5 @@
 import torch.nn as nn
-import torch.nn.functional as F
+# import torch.nn.functional as F
 
 import numpy as np
 import torch as th
@@ -44,6 +44,7 @@ class ObsRewardEncoder(nn.Module):
         # average
         obs_latent_avg = self.obs_encoder_avg(inputs)
         actions = actions.contiguous().view(-1, self.n_actions)
+
         action_latent_avg = self.action_encoder(actions)
 
         pred_avg_input = th.cat([obs_latent_avg, action_latent_avg], dim=-1)
@@ -63,7 +64,7 @@ class ObsRewardEncoder(nn.Module):
 
         other_actions = []
         for i in range(self.n_agents):
-            _other_actions  = []
+            _other_actions = []
             for j in range(self.n_agents):
                 if i != j:
                     _other_actions.append(actions[:, j])
