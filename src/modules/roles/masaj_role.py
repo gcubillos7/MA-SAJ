@@ -1,13 +1,10 @@
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions.normal import Normal
-from torch.distributions.kl import kl_divergence
 import torch as th
 
 LOG_STD_MAX = 2
 LOG_STD_MIN = -20
-
 
 class MASAJRole(nn.Module):
     def __init__(self, args):
@@ -19,58 +16,40 @@ class MASAJRole(nn.Module):
         self.mu_layer = nn.Linear(args.rnn_hidden_dim, args.action_latent_dim)
         self.log_std_layer = nn.Linear(args.rnn_hidden_dim, args.action_latent_dim)
 
-        # self.act_limit = 1.0
-        self.decoder = None
         self.prior = None
         self.use_latent_normal = args.use_latent_normal
-        if not self.use_latent_normal:
-            self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
-        else:
-            self.dkl = kl_divergence
-
-        self.with_logprob = True
-        self.threshold = nn.parameter.Parameter(th.tensor(0.3181), requires_grad=False)  # 2 times the variance same mu
 
     def forward(self, hidden):
         latent_mu = self.mu_layer(hidden)
         latent_log_std = self.log_std_layer(hidden)
         latent_log_std = th.clamp(latent_log_std, LOG_STD_MIN, LOG_STD_MAX)
         latent_std = th.exp(latent_log_std)
-        latent_dist = Normal(latent_mu, latent_std)
-        latent_action = latent_dist.sample()
-        dkl_loss = None
 
-        if self.prior is not None:
-            if self.use_latent_normal:  # dkl distributions
-                # [bs, action_latent] [n_actions, action_latent]
-                dkl_loss = self.dkl(latent_dist, self.prior)
-            else:
-                sample = self.prior.sample()
-                log_p_prior = self.prior.log_prob(sample).sum(dim=-1)
-                log_p_latent = latent_dist.log_prob(latent_action).sum(dim=-1)
-                dkl_loss = self.dkl(log_p_latent, log_p_prior)
-            dkl_loss = th.max(dkl_loss, self.threshold)  # don't enforce the dkl inside the threshold
+        return latent_mu, latent_std
 
-        if self.with_logprob:
-            pi_action, log_p_pi = self.decoder(latent_action)
-            log_p_pi -= (2 * (np.log(2) - pi_action - F.softplus(-2 * pi_action))).sum(axis=1)
-        else:
-            pi_action = self.decoder(latent_action)
-            log_p_pi = None
+    def update_prior(self, prior):
+        self.prior = prior
 
-        pi_action = th.tanh(pi_action)
-        pi_action = self.act_limit * pi_action
+class MASAJRoleDiscrete(nn.Module):
+    def __init__(self, args):
+        super(MASAJRoleDiscrete, self).__init__()
+        self.args = args
+        self.n_actions = args.n_actions
 
-        return pi_action, log_p_pi, dkl_loss
+        self.fc = nn.Linear(args.rnn_hidden_dim, args.action_latent_dim)
+        self.action_space = th.ones(args.n_actions).to(args.device)
 
-    def update_latent_prior(self, mu, sigma):
-        self.prior = Normal(mu, sigma)
+    def forward(self, h, action_latent):
+        role_key = self.fc(h)  # [bs, action_latent] [n_actions, action_latent]
+        role_key = role_key.unsqueeze(-1)
+        action_latent_reshaped = action_latent.unsqueeze(0).repeat(role_key.shape[0], 1, 1)
 
-    def update_decoder(self, decoder):
-        self.decoder = decoder
+        dot = th.bmm(action_latent_reshaped, role_key).squeeze()
 
-        for param in self.decoder.parameters():
-            param.requires_grad = False
+        return dot
+
+    def update_action_space(self, new_action_space):
+        self.action_space = th.Tensor(new_action_space).to(self.args.device).float()
 
 # class SquashedGaussianMLPActor(nn.Module):
 #     """

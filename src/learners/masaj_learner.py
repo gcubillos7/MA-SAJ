@@ -2,21 +2,21 @@ import copy
 
 import numpy as np
 import torch as th
-import torch.nn.functional as F
+# import torch.nn.functional as F
+# from src.modules.critics.fop import FOPCritic
+# from torch.distributions import Categorical
 from src.components.episode_buffer import EpisodeBatch
-from src.modules.critics.fop import FOPCritic
 from src.modules.critics.masaj import MASAJCritic, MASAJRoleCritic
-# from src.modules.critics.masaj_role import MASAJRoleCritic
 from src.modules.mixers.fop import FOPMixer
 from src.utils.rl_utils import build_td_lambda_targets
-from torch.distributions import Categorical
 from torch.optim import RMSprop
 from src.modules.critics.value import ValueNet, RoleValueNet
 
-# rnn critic https://github.com/AnujMahajanOxf/MAVEN/blob/master/maven_code/src/modules/critics/coma.py
 
-# Role Selector -> Q para cada rol, para obs cada k pasos (producto punto entre centroide de clusters y salida de rnn)
-# Mixing Net para Rol Selector (FOP) -> (lambda net para los roles, mix net) -> Q para cada rol -> value con definición usando Q discreto
+# rnn critic https://github.com/AnujMahajanOxf/MAVEN/blob/master/maven_code/src/modules/critics/coma.py
+# Role Selector -> Q para cada rol, para obs cada k steps (product dot entre centroid de clusters y output de rnn)
+# Mixing Net para Rol Selector (FOP) -> (lambda net para los roles, mix net) -> Q para cada rol -> value con definition
+# using Q discrete
 # Se usa 
 class MASAJ_Learner:
     def __init__(self, mac, scheme, logger, args):
@@ -47,10 +47,10 @@ class MASAJ_Learner:
             self.mixer1.parameters())
         self.critic_params2 = list(self.critic2.parameters()) + list(self.mixer2.parameters())
 
-        self.value = ValueNet(args)
+        self.value = ValueNet(scheme, args)
         # self.target_value = copy.deepcopy(self.value)
         if args.use_role_value:
-            self.role_value = RoleValueNet(args)
+            self.role_value = RoleValueNet(scheme, args)
             # self.target_role_value = copy.deepcopy(self.role_value)
             self.value_params = list(self.value.parameters()) + list(self.role_value.parameters())
         else:
@@ -89,6 +89,7 @@ class MASAJ_Learner:
                                      eps=args.optim_eps)
 
         self.role_interval = args.role_interval
+        self.device = args.device
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # mask = batch["filled"][:, :-1].float()
@@ -120,7 +121,8 @@ class MASAJ_Learner:
         for t in range(batch.max_seq_length):
             agent_outs, role_outs = self.mac.forward(batch, t=t)
             mac_out.append(agent_outs)
-            if t % self.role_interval == 0 and t < batch.max_seq_length - 1:  # role out skips last element (avoid evaluating roles with 1 step)
+            if t % self.role_interval == 0 and t < batch.max_seq_length - 1:  # role out skips last element
+                # (avoid evaluating roles with 1 step)
                 role_out.append(role_outs)
 
         mac_out = th.stack(mac_out, dim=1)
@@ -184,7 +186,8 @@ class MASAJ_Learner:
         # role_out already missing last?
         # Use batch to build role inputs
         Input: Rewards [B, T-1], states [B, T-1], roles [B, T-1], terminated [B, T-1]
-        Output: Roles [B, RoleT, role_interval], Roles States [B, RoleT, role_interval, -1], Roles Terminated [B, RoleT, role_interval]
+        Output: Roles [B, RoleT, role_interval], Roles States [B, RoleT, role_interval, -1], Roles Terminated [B, RoleT,
+         role_interval]
         """
 
         roles_shape_o = roles_taken.shape  # bs, T-1, agents
@@ -294,7 +297,7 @@ class MASAJ_Learner:
 
     def train_actor(self, batch, t_env):
         """
-        Update actor and value nets as in SAC (haarjona)
+        Update actor and value nets as in SAC (Haarjona)
         https://github.com/haarnoja/sac/blob/master/sac/algos/sac.py  
         Add regularization term for implicit constraints 
         Mixer isn't used during policy improvement
@@ -303,7 +306,8 @@ class MASAJ_Learner:
         # KL(P, Q) = H(P,Q) - H(P) 
         # Max Entropy Objective  J = ... + alpha * H(π(· |st)) 
         # At the start we follow constraints at the end we don't
-        # Reverse KL Objective  J = ... - alpha *¨KL(π(· |st), π_role(· |st)) = ... + alpha * H(π(· |st))  - alpha * H(π(· |st), π_role(· |st)) 
+        # Reverse KL Objective  J = ... - alpha *¨KL(π(· |st), π_role(· |st)) = ... + alpha * H(π(· |st))  - alpha *
+        # H(π(· |st), π_role(· |st))
         bs = batch.batch_size
         max_t = batch.max_seq_length
         terminated = batch["terminated"][:, :-1].float()
@@ -347,7 +351,7 @@ class MASAJ_Learner:
 
         # Get values for act (is not necessary, but it helps with stability)
 
-        v_actions = self.values(
+        v_actions = self.value(
             inputs[:, :-1])  # inputs [BS, T-1, ...] --> Outputs: [BS*T-1] [BS*TRole, (None or N_roles)]
         v_actions = v_actions.reshape(-1)
 
@@ -368,7 +372,7 @@ class MASAJ_Learner:
             log_p_role = log_p_role.reshape(-1)
             role = role[:, :-1]
             # Move V towards Q
-            v_role = self.role_values(inputs_role).reshape(-1)
+            v_role = self.role_value(inputs_role).reshape(-1)
             v_role = v_role.reshape(-1)
             role_target = (alpha * log_p_role - q_vals_role).sum(dim=-1)
             role_loss = (role_target * role_mask).sum() / role_mask.sum()
@@ -390,7 +394,10 @@ class MASAJ_Learner:
 
         loss_policy = act_loss + role_loss
         loss_value = v_act_loss + v_role_loss
-
+        if self.args.continuos_actions:
+            kl_loss = self.mac.get_kl_loss()[:, :-1]
+            masked_kl_loss = (kl_loss * mask).sum() / mask.sum()
+            loss_policy += masked_kl_loss
         # Optimize values
         self.val_optimizer.zero_grad()
         loss_value.backward()
@@ -522,9 +529,11 @@ class MASAJ_Learner:
         #     mask_elems = mask.sum().item()
         #     self.logger.log_stat("td_error_abs", (masked_td_error.abs().sum().item() / mask_elems), t_env)
         #     self.logger.log_stat("q_taken_mean",
-        #                          (chosen_action_qvals * mask).sum().item() / (mask_elems * self.args.n_agents), t_env)
+        #                          (chosen_action_q_vals * mask).sum().item() / (mask_elems * self.args.n_agents),
+        #                          t_env)
         #     self.logger.log_stat("role_q_taken_mean",
-        #                          (chosen_role_qvals * role_mask).sum().item() / (role_mask.sum().item() * self.args.n_agents), t_env)
+        #                          (chosen_role_q_vals * role_mask).sum().item() / (role_mask.sum().item() *
+        #                          self.args.n_agents), t_env)
         #     self.logger.log_stat("target_mean", (targets * mask).sum().item() / (mask_elems * self.args.n_agents),
         #                          t_env)
         #     self.log_stats_t = t_env
@@ -567,7 +576,7 @@ class MASAJ_Learner:
         self.mac.load_models(path)
         self.critic1.load_state_dict(th.load("{}/critic1.th".format(path), map_location=lambda storage, loc: storage))
         self.critic2.load_state_dict(th.load("{}/critic2.th".format(path), map_location=lambda storage, loc: storage))
-        # Not quite right but I don't want to save target networks
+        # Not quite right, but I don't want to save target networks
         self.target_critic1.load_state_dict(self.critic1.state_dict())
         self.target_critic2.load_state_dict(self.critic2.state_dict())
 

@@ -1,7 +1,11 @@
 import torch as th
+from torch.distributions.kl import kl_divergence
 from torch.distributions import Categorical
+from torch.distributions.normal import Normal
 from .epsilon_schedules import DecayThenFlatSchedule
 import torch.nn.functional as F
+import torch.nn as nn
+import numpy as np
 
 REGISTRY = {}
 
@@ -106,6 +110,15 @@ class GaussianActionSelector():
         self.args = args
         self.test_greedy = getattr(args, "test_greedy", True)
 
+        # self.act_limit = 1.0
+        self.decoder = None
+        self.prior = None
+        self.use_latent_normal = args.use_latent_normal
+        if not self.use_latent_normal:
+            self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
+        else:
+            self.dkl = kl_divergence
+
     def select_action(self, mu, sigma, test_mode=False):
         # expects the following input dimensionalities:
         # mu: [b x a x u]
@@ -131,3 +144,57 @@ class GaussianActionSelector():
 
 
 REGISTRY["gaussian"] = GaussianActionSelector
+
+
+class GaussianLatentActionSelector():
+
+    def __init__(self, args):
+        self.args = args
+        self.test_greedy = getattr(args, "test_greedy", True)
+        self.prior = None
+        self.decoder = None
+        self.use_latent_normal = args.use_latent_normal
+        if not self.use_latent_normal:
+            self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
+        else:
+            self.dkl = kl_divergence
+        self.with_logprob = True
+        self.threshold = nn.parameter.Parameter(th.tensor(0.3181), requires_grad=False)  # 2 times the variance same mu
+        self.act_limit = args.act_limit
+
+    def update_decoder(self, decoder):
+        self.decoder = decoder
+        for param in self.decoder.parameters():
+            param.requires_grad = False
+
+    def select_action(self, mu, sigma, prior, test_mode=False):
+        dkl_loss = None
+        latent_dist = Normal(mu, sigma)
+        latent_action = mu if test_mode else latent_dist.sample()
+        log_p_latent = latent_dist.log_prob(latent_action).sum(dim=-1)
+        if not test_mode and prior:
+            if self.use_latent_normal:  # dkl distributions
+                # [bs, action_latent] [n_actions, action_latent]
+                dkl_loss = self.dkl(latent_dist, prior)
+            else:
+                sample = prior.sample()
+                log_p_prior = prior.log_prob(sample).sum(dim=-1)
+                dkl_loss = self.dkl(log_p_latent, log_p_prior)
+            dkl_loss = th.max(dkl_loss, self.threshold)  # don't enforce the dkl inside the threshold
+
+        if self.with_logprob:
+            pi_action, log_p_pi = self.decoder(latent_action)
+            log_p_pi += log_p_latent  # p_latent * p_action
+
+            log_p_pi -= (2 * (np.log(2) - pi_action - F.softplus(-2 * pi_action))).sum(axis=1)
+        else:
+            pi_action = self.decoder(latent_action)
+            log_p_pi = None
+
+        pi_action = th.tanh(pi_action)
+        pi_action = self.act_limit * pi_action
+
+        return pi_action, log_p_pi, dkl_loss
+
+
+REGISTRY["gaussian_latent"] = GaussianLatentActionSelector

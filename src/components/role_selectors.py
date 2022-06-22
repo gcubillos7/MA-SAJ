@@ -50,7 +50,7 @@ class MultinomialRoleSelector(nn.Module):
         return picked_roles
 
 
-REGISTRY["multinomial"] = MultinomialRoleSelector
+REGISTRY["multinomial_role"] = MultinomialRoleSelector
 
 # def select_role(self, policies, test_mode=False, t_env=None):
 #     self.epsilon = self.epsilon_schedule(t_env)
