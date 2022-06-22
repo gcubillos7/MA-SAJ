@@ -4,7 +4,9 @@ from src.components.action_selectors import REGISTRY as action_REGISTRY
 from src.modules.action_encoders import REGISTRY as action_encoder_REGISTRY
 from src.modules.roles import REGISTRY as role_REGISTRY
 from src.components.role_selectors import REGISTRY as role_selector_REGISTRY
+from torch.distributions.normal import Normal
 import torch as th
+import numpy as np
 # import numpy as np
 import copy
 import torch.nn.functional as F
@@ -39,24 +41,15 @@ class ROLEMAC:
 
         self.role_action_spaces = None
 
+        self.kl_loss = None
+
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         # Return valid actions (in action space)
-        avail_actions = ep_batch["avail_actions"][:, t_ep]
-
-        agent_outputs, role_outputs = self.forward(ep_batch, t_ep, test_mode=test_mode, t_env=t_env)
-
-        role_avail_actions = th.gather(self.role_action_spaces.unsqueeze(0).repeat(self.n_agents, 1, 1), dim=1,
-                                       index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).repeat(1, 1,
-                                                                                                    self.n_actions).long()).squeeze()
-        role_avail_actions = role_avail_actions.int().view(ep_batch.batch_size, self.n_agents, -1)
-
-        chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs],
-                                                            role_avail_actions[bs], t_env, test_mode=test_mode)
-
-        return agent_outputs, role_outputs
+        (actions, _), (selected_role, _) = self.forward(ep_batch, t_ep, test_mode=test_mode, t_env=t_env)
+        return actions, selected_role
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
-
+        avail_actions = ep_batch["avail_actions"][:, t]
         agent_inputs = self._build_inputs(ep_batch, t)
 
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
@@ -76,34 +69,52 @@ class ROLEMAC:
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
 
-        actions = []
-        log_p_action = []
+        actions, log_p_action, kl_loss = [], [], []
+        dkl_loss = None
         # compute individual q-values for each agent
         for role_i in range(self.n_roles):
-            action_output = self.roles[role_i](self.hidden_states, self.action_repr)  # [bs * n_agents, n_actions]
-            action_selected, log_p_action_selected = self.action_selector(action_output)
+            # [bs * n_agents, n_actions]
+            if not self.continous_actions:
+                dot = self.roles[role_i](self.hidden_states, self.action_repr)
+                log_p_ac = F.log_softmax(dot, dim=-1)
+                p_action = th.exp(log_p_ac)
+                pi_action = self.action_selector(p_action, avail_actions, t_env, test_mode=False)
+                log_p_action_taken = log_p_ac.gather(index=pi_action, dim=-1)
+            else:
+                latent_mu, latent_std = self.roles[role_i](self.hidden_states, self.action_repr)
+                prior = self.roles[role_i].prior
+                pi_action, log_p_action_taken, dkl_loss = self.action_selector(latent_mu, latent_std, prior)
+            actions.append(pi_action)
+            log_p_action.append(log_p_action_taken)
+            kl_loss.append(dkl_loss)
 
-            None
+        actions = th.stack(actions, dim=1)  # [bs*n_agents, n_roles, n_actions]
+        if self.continous_actions:
+            kl_loss = th.stack(kl_loss, dim=1)  # [bs*n_agents, n_roles, n_actions]
+            kl_loss = th.gather(kl_loss, 1, self.selected_roles)
 
-            actions.append(action_selected)
+        log_p_action = th.stack(log_p_action, dim=1)  # [bs*n_agents, n_roles, n_actions]
 
-        actions_output = th.stack(actions, dim=1)  # [bs*n_agents, n_roles, n_actions]
-
-        # q value for each agent for each role
-        agent_outs = th.gather(roles_q, 1, self.selected_roles.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, self.n_actions))
-
+        actions = th.gather(actions, 1, self.selected_roles)  # TODO?: .unsqueeze(-1).unsqueeze(-1)
+        log_p_action = th.gather(log_p_action, 1, self.selected_roles)
+        # [bs * n_agents]
         # [bs * n_agents, n_roles , 1]
 
-        # [bs * n_agents, n_roles, n_actions]
-        agent_outs = agent_outs.view(ep_batch.batch_size, self.n_agents, -1)
+        actions = actions.view(ep_batch.batch_size, self.n_agents, -1)
 
-        if role_outputs is not None:
-            role_outputs = role_outputs.view(ep_batch.batch_size, self.n_agents, -1)
-
-        # action, log_p_action = mac_out
-        # role, log_p_role = role_out
+        self.kl_loss = kl_loss
 
         return (actions, log_p_action), (selected_role, log_p_role)
+
+    def update_prior(self, role_i, mu, sigma):
+        prior = Normal(mu, sigma)
+        self.roles[role_i].update_prior(prior)
+
+    def update_decoder(self, decoder):
+        self.action_selector.update_decoder(decoder)
+
+    def get_kl_loss(self):
+        return self.kl_loss
 
     def init_hidden(self, batch_size):
         self.hidden_states = self.agent.init_hidden().unsqueeze(0).expand(batch_size, self.n_agents, -1)  # bav

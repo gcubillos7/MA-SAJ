@@ -1,0 +1,41 @@
+# multinomial action selector
+action_selector: "gaussian_latent"
+# TODO CAMBIAR
+action_encoder: "obs_reward"
+
+epsilon_start: 1.0
+epsilon_finish: .05
+epsilon_anneal_time: 50000
+mask_before_softmax: False
+
+runner: "masaj"
+
+# update the target network every {} training steps
+target_update_interval: 200
+
+lr: 0.0005
+c_lr: 0.0005
+
+agent_output_type: "pi_logits"
+td_lambda: 0.8
+learner: "masaj_learner"
+
+name: "masaj"
+buffer_size: 5000
+
+mixing_embed_dim: 32
+n_head: 4  
+burn_in_period: 100
+
+
+
+mac: "role_mac"
+agent: "rode"
+role: 'msj'
+role_selector: 'dot'
+bi_opt: False
+n_role_clusters: 5
+role_interval: 5
+state_latent_dim: 32
+action_latent_dim: 20
+role_action_spaces_update_start: 50000
