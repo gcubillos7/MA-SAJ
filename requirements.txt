@@ -1,0 +1,12 @@
+numpy
+scipy
+pyyaml
+matplotlib
+pygame
+torch
+torchvision
+snakeviz
+pytest
+probscale
+imageio
+scikit-learn
