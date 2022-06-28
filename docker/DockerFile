@@ -32,8 +32,10 @@ RUN pip3 install jsonpickle==0.9.6
 RUN pip3 install setuptools
 RUN git clone https://github.com/oxwhirl/sacred.git /install/sacred && cd /install/sacred && python3 setup.py install
 
-
+WORKDIR ./src
 # MAMUJOCO
 RUN pip3 install git+https://github.com/schroederdewitt/multiagent_mujoco.git
 
-WORKDIR /
+COPY . .
+
+#CMD line?
