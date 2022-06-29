@@ -15,7 +15,7 @@ class MASAJCritic(nn.Module):
         self.input_shape = self._get_input_shape(scheme) + self.n_actions
         self.output_type = "q"
 
-        self.dim_out = 1 if args.continous_actions else self.n_actions
+        self.dim_out = 1 if args.continuous_actions else self.n_actions
         # Set up network layers
         self.fc1 = nn.Linear(self.input_shape, 64)
         self.fc2 = nn.Linear(64, 64)

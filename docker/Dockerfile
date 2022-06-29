@@ -1,4 +1,4 @@
-FROM nvidia/cuda:10.1-cudnn7-runtime-ubuntu18.04
+FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
 
 ENV CUDA_PATH /usr/local/cuda
 ENV CUDA_INCLUDE_PATH /usr/local/cuda/include
@@ -24,7 +24,7 @@ RUN apt-get install -y python-apt --reinstall
 
 #WORKDIR /
 
-COPY requirements.txt requirements.txt
+COPY ../requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt
 
 RUN mkdir /install
@@ -47,10 +47,11 @@ RUN pip3 install git+https://github.com/oxwhirl/smac.git
 ENV SC2PATH /home/user/pymarl/3rdparty/StarCraftII
 
 RUN apt-get install unzip
-COPY . /
+COPY .. /
 
 EXPOSE 8888
 WORKDIR /home/user/pymarl
+
 
 #WORKDIR /pymarl
 #CMD line?

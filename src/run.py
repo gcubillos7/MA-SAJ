@@ -103,26 +103,31 @@ def run_sequential(args, logger):
     args.n_actions = env_info["n_actions"]
     args.state_shape = env_info["state_shape"]
     args.obs_shape = env_info["obs_shape"]
-    args.actions_dtype = env_info["actions_dtype"]
-    action_dtype = th.long if not args.actions_dtype == np.float32 else th.float
+    # args.actions_dtype = env_info["actions_dtype"] # not available in SMAC
+    action_dtype = th.long  # if not args.actions_dtype == np.float32 else th.float
     # Default/Base scheme
     scheme = {
         "state": {"vshape": env_info["state_shape"]},
         "obs": {"vshape": env_info["obs_shape"], "group": "agents"},
-        "actions": {"vshape": (1,), "group": "agents", "dtype": action_dtype}, 
-        "avail_actions": {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int}, 
+        "actions": {"vshape": (1,), "group": "agents", "dtype": action_dtype},
+        "avail_actions": {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
         "reward": {"vshape": (1,)},
         "terminated": {"vshape": (1,), "dtype": th.uint8},
         "roles": {"vshape": (1,), "group": "agents", "dtype": th.long}
     }
-    
+
     groups = {
         "agents": args.n_agents
     }
 
-    preprocess = None if args.actions_dtype == np.float32 else {"actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])}
+    # preprocess = None if args.actions_dtype == np.float32 else {  # Not available in SMAC
+    #    "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])}
+    preprocess = {
+        "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])
+    }
 
     buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
+                          args.burn_in_period,
                           preprocess=preprocess,
                           device="cpu" if args.buffer_cpu_only else args.device)
 
@@ -170,7 +175,7 @@ def run_sequential(args, logger):
         if args.evaluate or args.save_replay:
             evaluate_sequential(args, runner)
             return
-    
+
     # start training
     episode = 0
     last_test_T = -args.test_interval - 1

@@ -6,6 +6,7 @@ import torch as th
 LOG_STD_MAX = 2
 LOG_STD_MIN = -20
 
+
 class MASAJRole(nn.Module):
     def __init__(self, args):
         super(MASAJRole, self).__init__()
@@ -29,6 +30,7 @@ class MASAJRole(nn.Module):
 
     def update_prior(self, prior):
         self.prior = prior
+
 
 class MASAJRoleDiscrete(nn.Module):
     def __init__(self, args):
