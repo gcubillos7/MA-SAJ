@@ -1,13 +1,13 @@
 import copy
-from src.components.episode_buffer import EpisodeBatch
-from src.modules.mixers.fop import FOPMixer
+from components.episode_buffer import EpisodeBatch
+from modules.mixers.fop import FOPMixer
 import torch.nn.functional as F
 import torch as th
 from torch.optim import RMSprop
 import numpy as np
 from torch.distributions import Categorical
-from src.modules.critics.fop import FOPCritic
-from src.utils.rl_utils import build_td_lambda_targets
+from modules.critics.fop import FOPCritic
+from utils.rl_utils import build_td_lambda_targets
 
 
 class FOP_Learner:

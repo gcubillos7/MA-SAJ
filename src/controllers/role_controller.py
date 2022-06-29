@@ -1,9 +1,9 @@
 # from tkinter import N
-from src.modules.agents import REGISTRY as agent_REGISTRY
-from src.components.action_selectors import REGISTRY as action_REGISTRY
-from src.modules.action_encoders import REGISTRY as action_encoder_REGISTRY
-from src.modules.roles import REGISTRY as role_REGISTRY
-from src.components.role_selectors import REGISTRY as role_selector_REGISTRY
+from modules.agents import REGISTRY as agent_REGISTRY
+from components.action_selectors import REGISTRY as action_REGISTRY
+from modules.action_encoders import REGISTRY as action_encoder_REGISTRY
+from modules.roles import REGISTRY as role_REGISTRY
+from components.role_selectors import REGISTRY as role_selector_REGISTRY
 from torch.distributions.normal import Normal
 import torch as th
 import numpy as np

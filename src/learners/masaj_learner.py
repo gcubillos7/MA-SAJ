@@ -5,12 +5,12 @@ import torch as th
 # import torch.nn.functional as F
 # from src.modules.critics.fop import FOPCritic
 # from torch.distributions import Categorical
-from src.components.episode_buffer import EpisodeBatch
-from src.modules.critics.masaj import MASAJCritic, MASAJRoleCritic
-from src.modules.mixers.fop import FOPMixer
-from src.utils.rl_utils import build_td_lambda_targets
+from components.episode_buffer import EpisodeBatch
+from modules.critics.masaj import MASAJCritic, MASAJRoleCritic
+from modules.mixers.fop import FOPMixer
+from utils.rl_utils import build_td_lambda_targets
 from torch.optim import RMSprop
-from src.modules.critics.value import ValueNet, RoleValueNet
+from modules.critics.value import ValueNet, RoleValueNet
 
 
 # rnn critic https://github.com/AnujMahajanOxf/MAVEN/blob/master/maven_code/src/modules/critics/coma.py
