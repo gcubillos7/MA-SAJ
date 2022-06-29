@@ -10,3 +10,6 @@ pytest
 probscale
 imageio
 scikit-learn
+Jinja2
+pymongo
+tensorboard-logger

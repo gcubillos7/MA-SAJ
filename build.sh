@@ -1,2 +1,2 @@
 echo 'Dockerfile name: MaMuJoCo'
-docker build -t MaMuJoCo .
+docker build -t mamujoco .
