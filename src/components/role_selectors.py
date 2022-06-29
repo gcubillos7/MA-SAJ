@@ -42,11 +42,12 @@ class MultinomialRoleSelector(nn.Module):
         else:
             picked_roles = Categorical(masked_policies).sample().long()
 
-            random_numbers = th.rand_like(agent_inputs[:, :, 0])
+            # random_numbers = th.rand_like(agent_inputs[:, :, 0])
+            random_numbers = th.rand_like(agent_inputs[:, 0])
             pick_random = (random_numbers < self.epsilon).long()
             random_roles = Categorical(th.ones(masked_policies.shape).float().to(self.args.device)).sample().long()
-            picked_roles = pick_random * random_roles + (1 - pick_random) * picked_roles
 
+            picked_roles = pick_random * random_roles + (1 - pick_random) * picked_roles
         return picked_roles
 
 

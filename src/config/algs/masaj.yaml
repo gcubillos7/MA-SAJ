@@ -1,5 +1,6 @@
 # multinomial action selector
-action_selector: "gaussian_latent"
+# action_selector: "gaussian_latent" # MAMUJOCO
+action_selector: "epsilon_greedy"
 # TODO CAMBIAR
 action_encoder: "obs_reward"
 
@@ -15,6 +16,7 @@ target_update_interval: 200
 
 lr: 0.0005
 c_lr: 0.0005
+v_lr: 0.0005 # ????
 
 agent_output_type: "pi_logits"
 td_lambda: 0.8
@@ -31,11 +33,14 @@ burn_in_period: 100
 
 mac: "role_mac"
 agent: "rode"
-role: 'msj'
-role_selector: 'dot'
+role: "msj_discrete" #SMAC => msj_discrete
+role_selector: "multinomial_role"
 bi_opt: False
 n_role_clusters: 5
 role_interval: 5
 state_latent_dim: 32
 action_latent_dim: 20
 role_action_spaces_update_start: 50000
+use_role_value: True # ??
+n_roles: 3 #n_roles
+per_role_q: True # ?? see critic

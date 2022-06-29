@@ -48,3 +48,4 @@ label: "default_label"
 
 # --- Added parameters ---
 use_latent_normal: True
+continuous_actions: False #SMAC

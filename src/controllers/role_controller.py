@@ -18,16 +18,16 @@ class ROLEMAC:
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
         self.args = args
-        self.continous_actions = args.continous_actions
+        self.continuous_actions = args.continuous_actions
         self.role_interval = args.role_interval
 
         input_shape = self._get_input_shape(scheme)
         self._build_agents(input_shape)
-        self.n_roles = 3
+        self.n_roles = args.n_roles
         self._build_roles()
         self.agent_output_type = args.agent_output_type
 
-        self.action_selector = action_REGISTRY[args.action_selector](args) if not self.continous_actions else None
+        self.action_selector = action_REGISTRY[args.action_selector](args) if not self.continuous_actions else None
         self.role_selector = role_selector_REGISTRY[args.role_selector](input_shape, args)
         self.action_encoder = action_encoder_REGISTRY[args.action_encoder](args)
 
@@ -62,6 +62,7 @@ class ROLEMAC:
             # Get Index of the role of each agent
             selected_roles = self.role_selector.select_role(role_outputs, test_mode=test_mode,
                                                             t_env=t_env).squeeze()
+            selected_roles = selected_roles.unsqueeze(-1).expand(-1,self.args.n_roles)
             self.selected_roles = selected_roles
             # assumes role_outputs are logits
             log_p_role = F.log_softmax(role_outputs, dim=-1).gather(index=self.selected_roles, dim=-1)
@@ -74,11 +75,11 @@ class ROLEMAC:
         # compute individual q-values for each agent
         for role_i in range(self.n_roles):
             # [bs * n_agents, n_actions]
-            if not self.continous_actions:
+            if not self.continuous_actions:
                 dot = self.roles[role_i](self.hidden_states, self.action_repr)
                 log_p_ac = F.log_softmax(dot, dim=-1)
                 p_action = th.exp(log_p_ac)
-                pi_action = self.action_selector(p_action, avail_actions, t_env, test_mode=False)
+                pi_action = self.action_selector.select_action(p_action, avail_actions, t_env, test_mode=False)
                 log_p_action_taken = log_p_ac.gather(index=pi_action, dim=-1)
             else:
                 latent_mu, latent_std = self.roles[role_i](self.hidden_states, self.action_repr)
@@ -89,7 +90,7 @@ class ROLEMAC:
             kl_loss.append(dkl_loss)
 
         actions = th.stack(actions, dim=1)  # [bs*n_agents, n_roles, n_actions]
-        if self.continous_actions:
+        if self.continuous_actions:
             kl_loss = th.stack(kl_loss, dim=1)  # [bs*n_agents, n_roles, n_actions]
             kl_loss = th.gather(kl_loss, 1, self.selected_roles)
 
