@@ -38,7 +38,7 @@ class MultinomialRoleSelector(nn.Module):
         self.epsilon = self.schedule.eval(t_env)
 
         if test_mode and self.test_greedy:
-            picked_roles = masked_policies.max(dim=2)[1]
+            picked_roles = masked_policies.max(dim=1)[1]
             return picked_roles, None
         else:
             dist = Categorical(logits=masked_policies)
