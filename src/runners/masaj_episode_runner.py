@@ -64,6 +64,9 @@ class EpisodeRunner:
             # Pass the entire batch of experiences up till now to the agents
             # Receive the actions for each agent at this timestep in a batch of size 1
             actions, roles = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, test_mode=test_mode)
+            actions = actions.numpy()  # before actions.shape [bs, n_agents, n_roles]
+            roles = roles.numpy()
+
             reward, terminated, env_info = self.env.step(actions[0])
             episode_return += reward
 
@@ -87,7 +90,7 @@ class EpisodeRunner:
 
         # Select actions in the last stored state
         actions, roles = self.mac.select_actions(self.batch, t_ep=self.t,
-                                                                     t_env=self.t_env, test_mode=test_mode)
+                                                 t_env=self.t_env, test_mode=test_mode)
         self.batch.update({"actions": actions}, ts=self.t)
 
         cur_stats = self.test_stats if test_mode else self.train_stats
