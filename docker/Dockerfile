@@ -47,7 +47,8 @@ RUN pip3 install git+https://github.com/oxwhirl/smac.git
 ENV SC2PATH /home/user/pymarl/3rdparty/StarCraftII
 
 RUN apt-get install unzip
-COPY .. /
+RUN mkdir -p /home/user/pymarl
+COPY .. /home/user/pymarl
 
 EXPOSE 8888
 WORKDIR /home/user/pymarl
