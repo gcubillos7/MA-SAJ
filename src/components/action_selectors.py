@@ -93,12 +93,20 @@ class EpsilonGreedyActionSelector():
         masked_q_values = agent_inputs.clone()
         masked_q_values[avail_actions == 0.0] = -float("inf")  # should never be selected!
 
+        dist = Categorical(logits=masked_q_values)
+        # picked_actions = dist.sample()
+
         random_numbers = th.rand_like(agent_inputs[:, :, 0])
         pick_random = (random_numbers < self.epsilon).long()
         random_actions = Categorical(avail_actions.float()).sample().long()
 
         picked_actions = pick_random * random_actions + (1 - pick_random) * masked_q_values.max(dim=2)[1]
-        return picked_actions
+
+        # assumes role_outputs are logits
+        log_p = dist.log_prob(picked_actions)
+        return picked_actions, log_p
+
+
 
 
 REGISTRY["epsilon_greedy"] = EpsilonGreedyActionSelector

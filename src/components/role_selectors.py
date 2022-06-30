@@ -39,8 +39,10 @@ class MultinomialRoleSelector(nn.Module):
 
         if test_mode and self.test_greedy:
             picked_roles = masked_policies.max(dim=2)[1]
+            return picked_roles, None
         else:
-            picked_roles = Categorical(masked_policies).sample().long()
+            dist = Categorical(logits=masked_policies)
+            picked_roles = dist.sample()
 
             # random_numbers = th.rand_like(agent_inputs[:, :, 0])
             random_numbers = th.rand_like(agent_inputs[:, 0])
@@ -48,7 +50,11 @@ class MultinomialRoleSelector(nn.Module):
             random_roles = Categorical(th.ones(masked_policies.shape).float().to(self.args.device)).sample().long()
 
             picked_roles = pick_random * random_roles + (1 - pick_random) * picked_roles
-        return picked_roles
+
+            # assumes role_outputs are logits
+            log_p_role = dist.log_prob(picked_roles)
+
+            return picked_roles, log_p_role
 
 
 REGISTRY["multinomial_role"] = MultinomialRoleSelector
