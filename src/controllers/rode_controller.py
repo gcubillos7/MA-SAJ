@@ -50,7 +50,9 @@ class RODEMAC:
 
         self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
         self.action_repr = th.ones(self.n_actions, self.args.action_latent_dim).to(args.device)
-
+        
+        self.logger = None
+        
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         # Only select actions for the selected batch elements in bs
         avail_actions = ep_batch["avail_actions"][:, t_ep]

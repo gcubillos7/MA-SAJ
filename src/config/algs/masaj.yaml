@@ -6,7 +6,8 @@ action_encoder: "obs_reward"
 
 epsilon_start: 1.0
 epsilon_finish: .05
-epsilon_anneal_time: 50000
+epsilon_anneal_time: 70000
+epsilon_anneal_time_exp: 70000
 mask_before_softmax: False
 
 runner: "masaj"

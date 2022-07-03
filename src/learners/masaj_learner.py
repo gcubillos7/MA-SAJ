@@ -21,9 +21,12 @@ from modules.critics.value import ValueNet, RoleValueNet
 class MASAJ_Learner:
     def __init__(self, mac, scheme, logger, args):
         self.args = args
-        self.mac = mac
-        self.target_mac = copy.deepcopy(mac)
         self.logger = logger
+
+        self.mac = mac
+        self.mac.logger = self.logger
+        self.target_mac = copy.deepcopy(mac)
+        
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
         self.last_target_update_episode = 0
@@ -91,6 +94,7 @@ class MASAJ_Learner:
         self.role_interval = args.role_interval
         self.device = args.device
 
+
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # mask = batch["filled"][:, :-1].float()
         # mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
@@ -99,10 +103,10 @@ class MASAJ_Learner:
         #     self.logger.console_logger.error("Learner: mask.sum() == 0 at t_env {}".format(t_env))
         #     return
 
-        self.train_encoder(batch, t_env)
+        # self.train_encoder(batch, t_env)
         self.train_actor(batch, t_env)
         self.train_critic(batch, t_env)
-        self.train_decoder(batch, t_env)
+        # self.train_decoder(batch, t_env)
 
         if (episode_num - self.last_target_update_episode) / self.args.target_update_interval >= 1.0:
             self._update_targets()
@@ -174,6 +178,7 @@ class MASAJ_Learner:
         Create a tensor representing roles each time step, the output is padded to be of size role_t
         """
         tensor_shape = tensor.shape
+        self.logger.console_logger.info(f"tensor_shape {tensor_shape}")
         roles_shape = list(tensor_shape)
         roles_shape[1] = role_t
         tensor_out = th.zeros(roles_shape).to(self.device)
@@ -313,14 +318,14 @@ class MASAJ_Learner:
         terminated = batch["terminated"][:, :-1].float()
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
-        mask = mask.repeat(1, 1, self.n_agents).view(-1)
-
+        mask = mask.repeat(1, 1, self.n_agents)
         alpha: float = max(0.05, 0.5 - t_env / 200000)  # linear decay
 
         role_at = int(np.ceil((max_t - 1) / self.role_interval))  # always the same size as role_out
         role_t = role_at * self.role_interval
         role_mask = self._to_role_tensor(mask, role_t, max_t - 1)
         role_mask = role_mask.view(bs, role_at, self.role_interval, -1)[:, :, 0]
+        mask = mask.view(-1)
 
         # [ep_batch.batch_size, max_t, self.n_agents, -1]
         mac_out, role_out = self._get_policy(batch, self.mac)

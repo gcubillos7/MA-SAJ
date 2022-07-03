@@ -16,8 +16,14 @@ class MultinomialRoleSelector(nn.Module):
                                             nn.Linear(2 * args.rnn_hidden_dim, args.action_latent_dim))
 
         self.schedule = DecayThenFlatSchedule(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time,
+                                              args.epsilon_anneal_time_exp,
+                                              args.role_action_spaces_update_start,
                                               decay="linear")
+
+        self.role_action_spaces_update_start = self.args.role_action_spaces_update_start
+
         self.epsilon = self.schedule.eval(0)
+
         self.test_greedy = getattr(args, "test_greedy", True)
 
     def dot_product(self, inputs, role_latent):
@@ -35,7 +41,11 @@ class MultinomialRoleSelector(nn.Module):
 
     def select_role(self, agent_inputs, t_env, test_mode=False):
         masked_policies = agent_inputs.clone()
-        self.epsilon = self.schedule.eval(t_env)
+        
+        if t_env is not None:
+            self.epsilon = self.schedule.eval(t_env) 
+        else:
+            self.epsilon = self.schedule.finish
 
         if test_mode and self.test_greedy:
             picked_roles = masked_policies.max(dim=1)[1]
