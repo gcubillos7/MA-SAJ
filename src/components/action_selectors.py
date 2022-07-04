@@ -51,18 +51,21 @@ class MultinomialActionSelector():
         masked_policies = agent_inputs.clone()
         masked_policies[avail_actions == 0.0] = 0.0
 
-        self.epsilon = self.schedule.eval(t_env)
-
+        if t_env is not None:
+            self.epsilon = self.schedule.eval(t_env)
+            prob = avail_actions.float()
+        else:
+            self.epsilon = self.schedule.finish
+            prob = avail_actions.float() + 1e-10
         if test_mode and self.test_greedy:
             picked_actions = masked_policies.max(dim=2)[1]
         else:
             picked_actions = Categorical(masked_policies).sample().long()
-
             random_numbers = th.rand_like(agent_inputs[:, :, 0])
             pick_random = (random_numbers < self.epsilon).long()
-            random_actions = Categorical(avail_actions.float()).sample().long()
+            random_actions = Categorical(prob).sample().long()
             picked_actions = pick_random * random_actions + (1 - pick_random) * picked_actions
-
+        
         if not (th.gather(avail_actions, dim=2, index=picked_actions.unsqueeze(2)) > 0.99).all():
             return self.select_action(agent_inputs, avail_actions, t_env, test_mode)
 
@@ -82,33 +85,39 @@ class EpsilonGreedyActionSelector():
                                               args.role_action_spaces_update_start,
                                               decay="linear")
         self.epsilon = self.schedule.eval(0)
-
+        self.logger = None
+        
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
-        # Assuming agent_inputs is a batch of Q-Values for each agent bav
-        if t_env is not None:
-            self.epsilon = self.schedule.eval(t_env)
-        else:
-            self.epsilon = self.schedule.finish
-
-        if test_mode:
-            # Greedy action selection only
-            self.epsilon = 0.0
 
         # mask actions that are excluded from selection
         masked_q_values = agent_inputs.clone()
-        masked_q_values[avail_actions == 0.0] = -float("inf")  # should never be selected!
+
+        masked_q_values[avail_actions == 0.0] = th.tensor(th.finfo(agent_inputs.dtype).min, dtype=agent_inputs.dtype)
 
         dist = Categorical(logits=masked_q_values)
-        # picked_actions = dist.sample()
+
+        # Assuming agent_inputs is a batch of Q-Values for each agent bav
+        if t_env is not None:
+            self.epsilon = self.schedule.eval(t_env)
+            prob =  avail_actions.float()
+        else:
+            self.epsilon = self.schedule.finish
+            prob =  avail_actions.float() + 1e-10
+        if test_mode:
+            # Greedy action selection only
+            picked_actions = masked_q_values.max(dim=2)[1]
+            log_p = dist.log_prob(picked_actions)
+            
+            return picked_actions, log_p
 
         random_numbers = th.rand_like(agent_inputs[:, :, 0])
         pick_random = (random_numbers < self.epsilon).long()
-        random_actions = Categorical(avail_actions.float()).sample().long()
-
+        random_actions = Categorical(prob).sample().long()
         picked_actions = pick_random * random_actions + (1 - pick_random) * masked_q_values.max(dim=2)[1]
 
-        # assumes role_outputs are logits
         log_p = dist.log_prob(picked_actions)
+        self.logger.console_logger.info(f"(as) picked_action {picked_actions.shape}")
+
         return picked_actions, log_p
 
 
@@ -132,7 +141,7 @@ class GaussianActionSelector():
         else:
             self.dkl = kl_divergence
 
-    def select_action(self, mu, sigma, test_mode=False):
+    def select_action(self, mu, sigma, t_env = None, test_mode=False):
         # expects the following input dimensionalities:
         # mu: [b x a x u]
         # sigma: [b x a x u]

@@ -43,13 +43,17 @@ class ROLEMAC:
 
         self.kl_loss = None
 
+        self.actions_forward = self.continous_actions_forward if self.continuous_actions else self.discrete_actions_forward
+        
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         # Return valid actions (in action space)
-        (actions, _), (selected_role, _) = self.forward(ep_batch, t_ep, test_mode=test_mode, t_env=t_env)
+        (actions, _), (selected_role, _) = self.forward(ep_batch, t = t_ep, test_mode=test_mode, t_env=t_env)
         return actions, selected_role
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
+        self.action_selector.logger = self.logger
         avail_actions = ep_batch["avail_actions"][:, t]
+        
         # avail_actions = avail_actions.reshape(ep_batch.batch_size * self.n_agents, -1)
         agent_inputs = self._build_inputs(ep_batch, t)
         bs = ep_batch.batch_size
@@ -71,57 +75,74 @@ class ROLEMAC:
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
 
+        # Get actions for each agent based on role taken
+        self.logger.console_logger.info(f"self.role_hidden_states {self.role_hidden_states.shape}")
+        
+        probs = avail_actions /avail_actions.sum(-1, keepdim=True)
+        simplex = th.all(probs >= 0, dim=-1) & ((probs.sum(-1) - 1).abs() < 1e-6)
+
+        (actions, log_p_action)  = self.actions_forward(bs, avail_actions, t_env, test_mode)
+
+        return (actions, log_p_action), (self.selected_roles, log_p_role)
+
+    def continous_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
         actions, log_p_action, kl_loss = [], [], []
-        dkl_loss = None
-        # compute individual q-values for each agent
-        self.logger.console_logger.info(f"avail_actions shape {avail_actions.shape}")
-        self.logger.console_logger.info(f"avail_actions {avail_actions}")
         for role_i in range(self.n_roles):
             # [bs * n_agents, n_actions]
-            if not self.continuous_actions:
-                dot = self.roles[role_i](self.hidden_states, self.action_repr)
-                dot = dot.view(ep_batch.batch_size, self.n_agents, -1)
-                log_p_ac = F.log_softmax(dot, dim=-1).reshape(ep_batch.batch_size, self.n_agents, -1)
-                self.logger.console_logger.info(f"log_p_ac {log_p_ac}")
-                p_action = th.exp(log_p_ac)
-                pi_action, log_p_action_taken = self.action_selector.select_action(log_p_ac, avail_actions, t_env,
-                                                                                      test_mode = test_mode)
-            else:
-                latent_mu, latent_std = self.roles[role_i](self.hidden_states, self.action_repr)
-                prior = self.roles[role_i].prior
-                pi_action, log_p_action_taken, dkl_loss = self.action_selector(latent_mu, latent_std, prior)
-            
+            dist_params = self.roles[role_i](self.hidden_states, self.action_repr)
+            prior = self.roles[role_i].prior
+            pi_action, log_p_action_taken, dkl_loss = self.action_selector(*dist_params, prior = prior, test_mode = test_mode)
+
             actions.append(pi_action)
             log_p_action.append(log_p_action_taken)
             kl_loss.append(dkl_loss)
 
-        self.logger.console_logger.info(f"pi_action {pi_action.shape}")
-        # actions without stack, list with len == n_roles, action=[bs, n_agents]
-
-        if self.continuous_actions:
-            kl_loss = th.stack(kl_loss, dim= -1)  # [bs*n_agents, n_roles]
-            kl_loss = kl_loss.view(bs*self.n_agents, -1)
-            kl_loss = kl_loss.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
-            kl_loss = kl_loss[: ,0]
-            kl_loss = kl_loss.view(bs, self.n_agents)
-
-        log_p_action = th.stack(log_p_action, dim= -1)  # [bs*n_agents, n_roles]
-        log_p_action = log_p_action.view(bs*self.n_agents, -1)
-        log_p_action = log_p_action.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
-        log_p_action = log_p_action[: ,0]
-        log_p_action = log_p_action.view(bs, self.n_agents)      
-
-        actions = th.stack(actions, dim= -1)  # [bs*n_agents, n_roles]
-        actions = actions.view(bs*self.n_agents, -1)
-        self.logger.console_logger.info(f"actions.view 1 {actions.shape}")
-        actions = actions.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
-        self.logger.console_logger.info(f"actions.gather {actions.shape}")
-        actions = actions[: ,0]
-        actions = actions.view(bs, self.n_agents)
-        self.logger.console_logger.info(f"actions.view {actions.shape}")
+        kl_loss = th.stack(kl_loss, dim= -1)  # [bs*n_agents, n_roles]
+        kl_loss = kl_loss.view(batch_size*self.n_agents, -1)
+        kl_loss = kl_loss.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
+        kl_loss = kl_loss[: ,0]
+        kl_loss = kl_loss.view(batch_size, self.n_agents)
         self.kl_loss = kl_loss
 
-        return (actions, log_p_action), (self.selected_roles, log_p_role)
+        log_p_action = th.stack(log_p_action, dim= -1)  # [bs*n_agents, n_roles]
+        log_p_action = log_p_action.view(batch_size*self.n_agents, -1) 
+        log_p_action = log_p_action.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
+        log_p_action = log_p_action[: ,0]
+        log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]     
+
+        actions = th.stack(actions, dim= -1)  # [bs*n_agents, dim_actions, n_roles]
+        actions = actions.view(batch_size*self.n_agents, self.n_actions, -1)
+        actions = actions.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = -1)
+        actions = actions[: ,0]
+        actions = actions.view(batch_size, self.n_agents, self.n_actions, -1)
+
+        return actions, log_p_action
+
+
+
+    def discrete_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
+        actions, log_p_action = [], []
+        for role_i in range(self.n_roles):
+            dot = self.roles[role_i](self.hidden_states, self.action_repr)
+            dot = dot.view(batch_size, self.n_agents, -1)
+            self.logger.console_logger.info(f"dot.min {dot.min()}")
+            pi_action, log_p_action_taken = self.action_selector.select_action(agent_inputs = dot, avail_actions = avail_actions, t_env = t_env,test_mode = test_mode)
+            log_p_action.append(log_p_action_taken)
+            actions.append(pi_action)
+        
+        log_p_action = th.stack(log_p_action, dim= -1)  # [bs*n_agents, n_roles]
+        log_p_action = log_p_action.view(batch_size*self.n_agents, -1) 
+        log_p_action = log_p_action.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
+        log_p_action = log_p_action[: ,0]
+        log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]     
+
+        actions = th.stack(actions, dim= -1)  # [bs*n_agents, dim_actions, n_roles]
+        actions = actions.view(batch_size*self.n_agents, -1)
+        actions = actions.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = -1)
+        actions = actions[: ,0]
+        actions = actions.view(batch_size, self.n_agents)
+
+        return actions, log_p_action
 
     def update_prior(self, role_i, mu, sigma):
         prior = Normal(mu, sigma)

@@ -58,11 +58,11 @@ class MASAJRoleCritic(nn.Module):
         super(MASAJRoleCritic, self).__init__()
 
         self.args = args
-        self.n_actions = args.n_actions
         self.n_roles = args.n_roles
+        self.n_agents = args.n_agents
         self.role_interval = args.n_roles
         # obs + n_agents
-        self.input_shape = self._get_input_shape(scheme) + self.n_actions
+        self.input_shape = self._get_input_shape(scheme) + self.n_roles
         self.output_type = "q"
 
         self.dim_out = 1 if args.per_role_q else self.n_roles
@@ -103,5 +103,5 @@ class MASAJRoleCritic(nn.Module):
     def _get_input_shape(self, scheme):
         # state
         input_shape = scheme["obs"]["vshape"]
-        input_shape += self.n_roles
+        input_shape += self.n_agents
         return input_shape  # [n_agents + n_obs]

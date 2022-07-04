@@ -12,3 +12,4 @@ def build_td_lambda_targets(rewards, terminated, mask, target_qs, n_agents, gamm
         ret[:, t] = td_lambda * gamma * ret[:, t + 1] + mask[:, t] * (rewards[:, t] + n_td_lambda)
     # Returns lambda-return from t=0 to t=T-1, i.e. in B*T-1*A
     return ret [:, 0:-1]
+

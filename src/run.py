@@ -17,8 +17,6 @@ from utils.logging import Logger
 from utils.timehelper import time_left, time_str
 
 import pickle
-
-
 def run(_run, _config, _log):
     # check args sanity
     _config = args_sanity_check(_config, _log)
@@ -136,10 +134,10 @@ def run_sequential(args, logger):
 
     # Give runner the scheme
     runner.setup(scheme=scheme, groups=groups, preprocess=preprocess, mac=mac)
-
+    
     # Learner
     learner = le_REGISTRY[args.learner](mac, buffer.scheme, logger, args)
-
+    
     if args.use_cuda:
         learner.cuda()
 

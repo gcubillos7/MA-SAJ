@@ -41,7 +41,10 @@ n_role_clusters: 5
 role_interval: 5
 state_latent_dim: 32
 action_latent_dim: 20
-role_action_spaces_update_start: 50000
+role_action_spaces_update_start: 0
 use_role_value: True # ??
 n_roles: 3 #n_roles
 per_role_q: True # ?? see critic
+
+
+batch_size: 2

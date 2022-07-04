@@ -2,7 +2,7 @@ import copy
 
 import numpy as np
 import torch as th
-# import torch.nn.functional as F
+import torch.nn.functional as F
 # from src.modules.critics.fop import FOPCritic
 # from torch.distributions import Categorical
 from components.episode_buffer import EpisodeBatch
@@ -21,6 +21,7 @@ from modules.critics.value import ValueNet, RoleValueNet
 class MASAJ_Learner:
     def __init__(self, mac, scheme, logger, args):
         self.args = args
+        self.continuous_actions = args.continuous_actions
         self.logger = logger
 
         self.mac = mac
@@ -29,6 +30,7 @@ class MASAJ_Learner:
         
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
+        self.n_roles = args.n_roles
         self.last_target_update_episode = 0
         self.critic_training_steps = 0
 
@@ -112,7 +114,7 @@ class MASAJ_Learner:
             self._update_targets()
             self.last_target_update_episode = episode_num
 
-    def _get_policy(self, batch, mac):
+    def _get_policy(self, batch, mac, test_mode= False):
         """
         Returns
         mac_out: returns distribution of actions .log_p(actions)
@@ -120,17 +122,21 @@ class MASAJ_Learner:
         """
         # Get role policy and mac policy
         mac_out = []
+        log_p_out = []
         role_out = []
+        log_p_role = []
         mac.init_hidden(batch.batch_size)
         for t in range(batch.max_seq_length):
-            agent_outs, role_outs = self.mac.forward(batch, t=t)
-            mac_out.append(agent_outs)
+            agent_outs, role_outs = self.mac.forward(batch, t=t, test_mode = test_mode)
+            mac_out.append(agent_outs[0])
+            log_p_out.append(agent_outs[1])
             if t % self.role_interval == 0 and t < batch.max_seq_length - 1:  # role out skips last element
                 # (avoid evaluating roles with 1 step)
-                role_out.append(role_outs)
-
-        mac_out = th.stack(mac_out, dim=1)
-        role_out = th.stack(role_out, dim=1)
+                role_out.append(role_outs[0])
+                log_p_role.append(role_outs[1])
+                
+        mac_out = (th.stack(mac_out, dim=1), th.stack(log_p_out, dim=1))
+        role_out = (th.stack(role_out, dim=1), th.stack(log_p_role, dim=1))
 
         # Return output of policy for each agent/role
         return mac_out, role_out
@@ -142,17 +148,23 @@ class MASAJ_Learner:
         # Input Shape shape [Bs, T,...] [Bs, TRole,...] (for TD lambda) 
         # Output Shape [Bs, T,...] [Bs, TRole,...] (for TD lambda) 
         """
+        if self.continuous_actions:
+            next_action_input = next_action
+        else:
+            next_action_input = F.one_hot(next_action, num_classes = self.n_actions)
+        next_role_input = F.one_hot(next_role, num_classes = self.n_roles)
+
         with th.no_grad():
-            q_vals1 = self.target_critic1.forward(target_inputs, next_action)
-            q_vals2 = self.target_critic2.forward(target_inputs, next_action)
+            q_vals1 = self.target_critic1.forward(target_inputs, next_action_input)
+            q_vals2 = self.target_critic2.forward(target_inputs, next_action_input)
 
             vs1 = self.value(target_inputs)
             vs2 = self.value(target_inputs)
 
             # Get Q and V values for roles
             if self.args.use_role_value:
-                q_vals1_role = self.role_target_critic1.forward(target_inputs_role, next_role).detach()
-                q_vals2_role = self.role_target_critic2.forward(target_inputs_role, next_role).detach()
+                q_vals1_role = self.role_target_critic1.forward(target_inputs_role, next_role_input).detach()
+                q_vals2_role = self.role_target_critic2.forward(target_inputs_role, next_role_input).detach()
                 v_role1 = self.role_value(target_inputs)
                 v_role2 = self.role_value(target_inputs)
             else:
@@ -162,13 +174,13 @@ class MASAJ_Learner:
                 v_role2 = th.logsumexp(q_vals2_role / alpha, dim=-1) * alpha
 
             # Get Q joint for actions (using individual Qs and Vs)
-            q_vals1 = self.target_mixer1(q_vals1, states, actions=next_action, vs=vs1)
-            q_vals2 = self.target_mixer2(q_vals2, states, actions=next_action, vs=vs2)
+            q_vals1 = self.target_mixer1(q_vals1, states, actions=next_action_input, vs=vs1)
+            q_vals2 = self.target_mixer2(q_vals2, states, actions=next_action_input, vs=vs2)
             target_q_vals = th.min(q_vals1, q_vals2)
 
             # Get Q joint for roles (using individual Qs and Vs)
-            q_vals1_role = self.target_mixer1(q_vals1_role, role_states, actions=next_role, vs=v_role1)
-            q_vals2_role = self.target_mixer2(q_vals2_role, role_states, actions=next_role, vs=v_role2)
+            q_vals1_role = self.target_mixer1(q_vals1_role, role_states, actions=next_role_input, vs=v_role1)
+            q_vals2_role = self.target_mixer2(q_vals2_role, role_states, actions=next_role_input, vs=v_role2)
             target_q_vals_role = th.min(q_vals1_role, q_vals2_role)
 
         return target_q_vals, target_q_vals_role
@@ -231,9 +243,15 @@ class MASAJ_Learner:
         # Input shape shape [Bs, T,...] [Bs, TRole,...]
         # Output shape [Bs*T] [Bs*TRole, (None or N_roles)]
         """
+        if self.continuous_actions:
+            action_input = action
+        else:
+            action_input = F.one_hot(action, num_classes = self.n_actions)
+        role_input = F.one_hot(role, num_classes = self.n_roles)
+
         # Get Q and V values for actions
-        q_vals1 = self.critic1.forward(inputs, action)  # last q value isn't used
-        q_vals2 = self.critic2.forward(inputs, action)
+        q_vals1 = self.critic1.forward(inputs, action_input)  # last q value isn't used
+        q_vals2 = self.critic2.forward(inputs, action_input)
 
         with th.no_grad():
             vs1 = self.value(inputs)
@@ -242,8 +260,8 @@ class MASAJ_Learner:
         # Get Q and V values for roles
         if self.args.use_role_value:
             # Possible Bug
-            q_vals1_role = self.role_critic1.forward(inputs_role, role)
-            q_vals2_role = self.role_critic2.forward(inputs_role, role)
+            q_vals1_role = self.role_critic1.forward(inputs_role, role_input)
+            q_vals2_role = self.role_critic2.forward(inputs_role, role_input)
             q_role_taken1 = q_vals1_role
             q_role_taken2 = q_vals2_role
             with th.no_grad():
@@ -259,13 +277,13 @@ class MASAJ_Learner:
                 v_role2 = th.logsumexp(q_vals2_role / alpha, dim=-1) * alpha
 
         # Get Q joint for actions (using individual Qs and Vs)
-        q_vals1 = self.mixer1(q_vals1, states, actions=action, vs=vs1)
-        q_vals2 = self.mixer2(q_vals2, states, actions=action, vs=vs2)
+        q_vals1 = self.mixer1(q_vals1, states, actions=action_input, vs=vs1)
+        q_vals2 = self.mixer2(q_vals2, states, actions=action_input, vs=vs2)
         # q_vals = th.min(q_vals1, q_vals2)
 
         # Get Q joint for roles (using individual Qs and Vs)
-        q_vals1_role = self.mixer1(q_role_taken1, role_states, actions=role, vs=v_role1)
-        q_vals2_role = self.mixer2(q_role_taken2, role_states, actions=role, vs=v_role2)
+        q_vals1_role = self.mixer1(q_role_taken1, role_states, actions=role_input, vs=v_role1)
+        q_vals2_role = self.mixer2(q_role_taken2, role_states, actions=role_input, vs=v_role2)
         # q_vals_role = th.min(q_vals1_role, q_vals2_role)
 
         return (q_vals1, q_vals2), (q_vals1_role, q_vals2_role)
@@ -274,21 +292,27 @@ class MASAJ_Learner:
         """
         Get flattened individual Q values
         """
+        if self.continuous_actions:
+            action_input = action
+        else:
+            action_input = F.one_hot(action, num_classes = self.n_actions)
+        role_input = F.one_hot(role, num_classes = self.n_roles)
+
         with th.no_grad():
             # Get Q values
-            q_vals1 = self.critic1.forward(inputs, action)
-            q_vals2 = self.critic2.forward(inputs, action)
+            q_vals1 = self.critic1.forward(inputs, action_input)
+            q_vals2 = self.critic2.forward(inputs, action_input)
             q_vals = th.min(q_vals1, q_vals2)  # Q(T,a) -> Q [Batch_size, seq, n_agents]
             q_vals = q_vals.reshape(-1)
-            q_vals1_role = self.role_critic1.forward(inputs_role, role)
-            q_vals2_role = self.role_critic2.forward(inputs_role, role)
+            q_vals1_role = self.role_critic1.forward(inputs_role, role_input)
+            q_vals2_role = self.role_critic2.forward(inputs_role, role_input)
             q_vals_role = th.min(q_vals1_role, q_vals2_role)  # Q(T,a)
 
             if self.args.use_role_value:
                 # inputs = self.role_critic1._inputs(batch, bs, max_t)
                 q_vals_role = q_vals_role.reshape(-1)
             else:
-                q_vals_role = q_vals_role.reshape(-1, self.mac.n_roles)
+                q_vals_role = q_vals_role.reshape(-1, self.n_roles)
 
         return q_vals, q_vals_role
 
@@ -336,15 +360,15 @@ class MASAJ_Learner:
 
         # [batch.batch_size, max_t, self.n_agents]
         action, log_p_action = mac_out
-
+        
         log_p_action = log_p_action[:, :-1].clone()  # remove last step 
         log_p_action = log_p_action.reshape(-1)
         action = action[:, :-1]
+        
 
         # inputs are shared between v's and q's
         # Make sure that critic stacks actions from the inside
         inputs = self.critic1._build_inputs(batch, bs, max_t)
-        # TODO: Role critic should be in charge of building its inputs
         inputs_role = self.role_critic1._build_inputs(batch, bs, max_t)
 
         # inputs_role = inputs[:, :-1] --> but output is every role_interval steps 
@@ -352,6 +376,8 @@ class MASAJ_Learner:
         # inputs_role = inputs[:, :-1][: ,::self.role_interval] --> output is same size as input
 
         # inputs [BS, T-1, ...] --> Outputs: [BS*T-1] [BS*TRole, (None or N_roles)]
+        self.logger.console_logger.info(f"action.shape {inputs[:, :-1].shape}")
+        self.logger.console_logger.info(f"action.shape {action.shape}")
         q_vals, q_vals_role = self._get_q_values_no_grad(inputs[:, :-1], inputs_role, action, role)
 
         # Get values for act (is not necessary, but it helps with stability)
@@ -387,11 +413,11 @@ class MASAJ_Learner:
         else:
             # Get Q for each role
             log_p_role_copy = log_p_role[:, :-1].clone()
-            log_p_role_copy = log_p_role_copy.reshape(-1, self.mac.n_roles)
+            log_p_role_copy = log_p_role_copy.reshape(-1, self.n_roles)
             role = th.exp(log_p_role_copy)  # Get p instead of log_p
-            log_p_role = log_p_role[:, :-1].reshape(-1, self.mac.n_roles)
+            log_p_role = log_p_role[:, :-1].reshape(-1, self.n_roles)
             # policy target for discrete actions (from Soft Actor-Critic for Discrete Action Settings)
-            role_target = (role * (alpha * log_p_role - q_vals_role.reshape(-1, self.mac.n_roles))).sum(
+            role_target = (role * (alpha * log_p_role - q_vals_role.reshape(-1, self.n_roles))).sum(
                 dim=-1)
             role_loss = (role_target * role_mask).sum() / role_mask.sum()
             # The val net of roles isn't updated
@@ -399,7 +425,7 @@ class MASAJ_Learner:
 
         loss_policy = act_loss + role_loss
         loss_value = v_act_loss + v_role_loss
-        if self.args.continuos_actions:
+        if self.continuous_actions:
             kl_loss = self.mac.get_kl_loss()[:, :-1]
             masked_kl_loss = (kl_loss * mask).sum() / mask.sum()
             loss_policy += masked_kl_loss
