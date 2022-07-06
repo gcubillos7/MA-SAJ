@@ -1,4 +1,5 @@
 # from tkinter import N
+import pip
 from modules.agents import REGISTRY as agent_REGISTRY
 from components.action_selectors import REGISTRY as action_REGISTRY
 from modules.action_encoders import REGISTRY as action_encoder_REGISTRY
@@ -19,6 +20,7 @@ class ROLEMAC:
         self.n_actions = args.n_actions
         self.args = args
         self.continuous_actions = args.continuous_actions
+        self.use_role_value = args.use_role_value
         self.role_interval = args.role_interval
 
         input_shape = self._get_input_shape(scheme)
@@ -41,27 +43,35 @@ class ROLEMAC:
 
         self.role_action_spaces = None
 
+
         self.kl_loss = None
 
-        self.actions_forward = self.continous_actions_forward if self.continuous_actions else self.discrete_actions_forward
+        self.actions_forward = self.continuos_actions_forward if self.continuous_actions else self.discrete_actions_forward
+        self.logger = None
         
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         # Return valid actions (in action space)
-        (actions, _), (selected_role, _) = self.forward(ep_batch, t = t_ep, test_mode=test_mode, t_env=t_env)
-        return actions, selected_role
+        (agent_outputs, _), (_, _) = self.forward(ep_batch, t = t_ep, test_mode=test_mode, t_env=t_env)
+        
+        if self.continuous_actions:
+            return agent_outputs, self.selected_roles
+        else:
+            avail_actions = ep_batch["avail_actions"][:, t_ep]
+            # TODO: Implement action spaces (as in RODE)
+            # TODO: Make log probs aware of role_avail_actions
+            chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs], t_env, test_mode=test_mode)
+           
+            return chosen_actions, self.selected_roles
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
-        self.action_selector.logger = self.logger
+        # self.action_selector.logger = self.logger
         avail_actions = ep_batch["avail_actions"][:, t]
         
-        # avail_actions = avail_actions.reshape(ep_batch.batch_size * self.n_agents, -1)
-        agent_inputs = self._build_inputs(ep_batch, t)
-        bs = ep_batch.batch_size
+        agent_inputs = self._build_inputs(ep_batch, t) 
+        batch_size = ep_batch.batch_size
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
 
-        self.logger.console_logger.info(f"self.role_hidden_states {self.role_hidden_states.shape}")
-
-        selected_roles = None
+        role_outputs = None
         log_p_role = None
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
@@ -70,22 +80,63 @@ class ROLEMAC:
             # Get Index of the role of each agent
             selected_roles, log_p_role = self.role_selector.select_role(role_outputs, test_mode=test_mode,
                                                                         t_env=t_env)
+
             self.selected_roles = selected_roles
 
+            selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
+            
+            if self.use_role_value:
+                role_outputs = selected_roles
+            else:
+                role_outputs = self.softmax_roles(role_outputs, batch_size, test_mode) 
+                log_p_role = None
+                
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
 
-        # Get actions for each agent based on role taken
-        self.logger.console_logger.info(f"self.role_hidden_states {self.role_hidden_states.shape}")
-        
-        probs = avail_actions /avail_actions.sum(-1, keepdim=True)
-        simplex = th.all(probs >= 0, dim=-1) & ((probs.sum(-1) - 1).abs() < 1e-6)
+        (actions, log_p_action)  = self.actions_forward(batch_size, avail_actions, t_env, test_mode)
 
-        (actions, log_p_action)  = self.actions_forward(bs, avail_actions, t_env, test_mode)
 
-        return (actions, log_p_action), (self.selected_roles, log_p_role)
+        return (actions, log_p_action), (role_outputs, log_p_role)
 
-    def continous_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
+    def softmax_roles(self, role_outs, batch_size, test_mode):
+
+        role_outs =F.softmax(role_outs, dim=-1)
+
+        if not test_mode:
+            # Epsilon floor
+            epsilon_action_num = role_outs.size(-1)
+
+            role_outs = ((1 - self.action_selector.epsilon) * role_outs
+                            + th.ones_like(role_outs) * self.role_selector.epsilon/epsilon_action_num)
+
+        return role_outs.view(batch_size, self.n_agents, -1)
+
+    def softmax_actions(self, agent_outs, batch_size, avail_actions, test_mode):
+        # Asumes that action selector is multinomial
+        if getattr(self.args, "mask_before_softmax", True):
+            # Make the logits for unavailable actions very negative to minimise their affect on the softmax
+            reshaped_avail_actions = avail_actions.reshape(batch_size * self.n_agents, -1)
+            agent_outs[avail_actions == 0] = -1e11
+
+        agent_outs = F.softmax(agent_outs, dim=-1)
+        if not test_mode:
+            # Epsilon floor
+            epsilon_action_num = agent_outs.size(-1)
+            if getattr(self.args, "mask_before_softmax", True):
+                # With probability epsilon, we will pick an available action uniformly
+                epsilon_action_num = reshaped_avail_actions.sum(dim=1, keepdim=True).float()
+
+            agent_outs = ((1 - self.action_selector.epsilon) * agent_outs
+                            + th.ones_like(agent_outs) * self.action_selector.epsilon/epsilon_action_num)
+
+            if getattr(self.args, "mask_before_softmax", True):
+                # Zero out the unavailable actions
+                agent_outs[reshaped_avail_actions == 0] = 0.0
+
+        return agent_outs.view(batch_size, self.n_agents, -1)
+
+    def continuos_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
         actions, log_p_action, kl_loss = [], [], []
         for role_i in range(self.n_roles):
             # [bs * n_agents, n_actions]
@@ -118,31 +169,24 @@ class ROLEMAC:
 
         return actions, log_p_action
 
-
-
     def discrete_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
-        actions, log_p_action = [], []
+        pi = []
         for role_i in range(self.n_roles):
-            dot = self.roles[role_i](self.hidden_states, self.action_repr)
-            dot = dot.view(batch_size, self.n_agents, -1)
-            self.logger.console_logger.info(f"dot.min {dot.min()}")
-            pi_action, log_p_action_taken = self.action_selector.select_action(agent_inputs = dot, avail_actions = avail_actions, t_env = t_env,test_mode = test_mode)
-            log_p_action.append(log_p_action_taken)
-            actions.append(pi_action)
-        
-        log_p_action = th.stack(log_p_action, dim= -1)  # [bs*n_agents, n_roles]
-        log_p_action = log_p_action.view(batch_size*self.n_agents, -1) 
-        log_p_action = log_p_action.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = 1)
-        log_p_action = log_p_action[: ,0]
-        log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]     
+            pi_out = self.roles[role_i](self.hidden_states, self.action_repr)
+            pi_out = pi_out.view(batch_size, self.n_agents, self.n_actions)
+            pi.append(pi_out)
 
-        actions = th.stack(actions, dim= -1)  # [bs*n_agents, dim_actions, n_roles]
-        actions = actions.view(batch_size*self.n_agents, -1)
-        actions = actions.gather(index = self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim = -1)
-        actions = actions[: ,0]
-        actions = actions.view(batch_size, self.n_agents)
+        pi = th.stack(pi, dim= -1)  # [batch_size, self.n_agents, self.n_actions, n_roles]
+        pi = pi.view(batch_size*self.n_agents, self.n_actions, -1) # [batch_size*self.n_agents*self.n_actions, n_roles]
+        pi = pi.gather(index = self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles), dim = -1)
+        pi = pi[...,0]
 
-        return actions, log_p_action
+        if self.agent_output_type == "pi_logits":
+            pi = self.softmax_actions(pi, batch_size, avail_actions, test_mode)
+
+        pi = pi.view(batch_size, self.n_agents, self.n_actions)
+
+        return pi, None
 
     def update_prior(self, role_i, mu, sigma):
         prior = Normal(mu, sigma)

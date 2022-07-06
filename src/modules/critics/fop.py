@@ -4,11 +4,15 @@ import torch.nn.functional as F
 
 
 class FOPCritic(nn.Module):
-    def __init__(self, scheme, args):
+    def __init__(self, scheme, args, n_actions = None):
         super(FOPCritic, self).__init__()
 
         self.args = args
-        self.n_actions = args.n_actions
+        if n_actions is None:
+            self.n_actions = args.n_actions
+        else:
+            self.n_actions = n_actions
+            
         self.n_agents = args.n_agents
 
         # obs + n_agents

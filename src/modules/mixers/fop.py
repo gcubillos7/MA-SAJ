@@ -29,7 +29,7 @@ class FOPMixer(nn.Module):
                                nn.ReLU(),
                                nn.Linear(self.embed_dim, 1))
 
-    def forward(self, agent_qs, states, actions=None, vs=None):
+    def forward(self, agent_qs, states, actions, vs):
         bs = agent_qs.size(0)
         
         v = self.V(states).reshape(-1, 1).repeat(1, self.n_agents) / self.n_agents

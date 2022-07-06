@@ -121,7 +121,8 @@ def run_sequential(args, logger):
     # preprocess = None if args.actions_dtype == np.float32 else {  # Not available in SMAC
     #    "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])}
     preprocess = {
-        "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])
+        "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)]),
+        "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
     }
 
     buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
