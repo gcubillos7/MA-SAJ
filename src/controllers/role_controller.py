@@ -46,6 +46,7 @@ class ROLEMAC:
 
         self.kl_loss = None
 
+
         self.actions_forward = self.continuos_actions_forward if self.continuous_actions else self.discrete_actions_forward
         self.logger = None
         
@@ -59,6 +60,7 @@ class ROLEMAC:
             avail_actions = ep_batch["avail_actions"][:, t_ep]
             # TODO: Implement action spaces (as in RODE)
             # TODO: Make log probs aware of role_avail_actions
+
             chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs], t_env, test_mode=test_mode)
            
             return chosen_actions, self.selected_roles
@@ -66,10 +68,13 @@ class ROLEMAC:
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
         # self.action_selector.logger = self.logger
         avail_actions = ep_batch["avail_actions"][:, t]
-        
-        agent_inputs = self._build_inputs(ep_batch, t) 
+
+        agent_inputs = self._build_inputs(ep_batch, t)
         batch_size = ep_batch.batch_size
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
+
+        agent_inputs = self._build_inputs(ep_batch, t) 
+        batch_size = ep_batch.batch_size
 
         role_outputs = None
         log_p_role = None
@@ -84,7 +89,8 @@ class ROLEMAC:
             self.selected_roles = selected_roles
 
             selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
-            
+
+
             if self.use_role_value:
                 role_outputs = selected_roles
                 log_p_role = log_p_role.view(batch_size, self.n_agents)
@@ -97,12 +103,12 @@ class ROLEMAC:
 
         (actions, log_p_action)  = self.actions_forward(batch_size, avail_actions, t_env, test_mode)
 
-
         return (actions, log_p_action), (role_outputs, log_p_role)
 
     def softmax_roles(self, role_outs, batch_size, test_mode):
 
-        role_outs =F.softmax(role_outs, dim=-1)
+
+        role_outs = F.softmax(role_outs, dim=-1)
 
         if not test_mode:
             # Epsilon floor
@@ -148,6 +154,7 @@ class ROLEMAC:
             actions.append(pi_action)
             log_p_action.append(log_p_action_taken)
             kl_loss.append(dkl_loss)
+
 
         kl_loss = th.stack(kl_loss, dim= -1)  # [bs*n_agents, n_roles]
         kl_loss = kl_loss.view(batch_size*self.n_agents, -1)
