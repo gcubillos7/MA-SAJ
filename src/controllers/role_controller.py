@@ -88,10 +88,6 @@ class ROLEMAC:
 
             self.selected_roles = selected_roles
 
-
-        # compute individual hidden_states for each agent
-        self.hidden_states = self.agent(agent_inputs, self.hidden_states)
-
             selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
 
 
