@@ -6,7 +6,8 @@ action_encoder: "obs_reward"
 
 epsilon_start: 1.0
 epsilon_finish: .05
-epsilon_anneal_time: 50000
+epsilon_anneal_time: 70000
+epsilon_anneal_time_exp: 70000
 mask_before_softmax: False
 
 runner: "masaj"
@@ -40,7 +41,10 @@ n_role_clusters: 5
 role_interval: 5
 state_latent_dim: 32
 action_latent_dim: 20
-role_action_spaces_update_start: 50000
-use_role_value: True # ??
+role_action_spaces_update_start: 0
+use_role_value: True 
 n_roles: 3 #n_roles
-per_role_q: True # ?? see critic
+# per_role_q: True # ?? see critic
+
+
+batch_size: 2

@@ -58,14 +58,6 @@ class MultinomialActionSelector():
         else:
             picked_actions = Categorical(masked_policies).sample().long()
 
-            random_numbers = th.rand_like(agent_inputs[:, :, 0])
-            pick_random = (random_numbers < self.epsilon).long()
-            random_actions = Categorical(avail_actions.float()).sample().long()
-            picked_actions = pick_random * random_actions + (1 - pick_random) * picked_actions
-
-        if not (th.gather(avail_actions, dim=2, index=picked_actions.unsqueeze(2)) > 0.99).all():
-            return self.select_action(agent_inputs, avail_actions, t_env, test_mode)
-
         return picked_actions
 
 
@@ -78,10 +70,13 @@ class EpsilonGreedyActionSelector():
         self.args = args
 
         self.schedule = DecayThenFlatSchedule(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time,
+                                              args.epsilon_anneal_time_exp,
+                                              args.role_action_spaces_update_start,
                                               decay="linear")
         self.epsilon = self.schedule.eval(0)
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
+
         # Assuming agent_inputs is a batch of Q-Values for each agent bav
         self.epsilon = self.schedule.eval(t_env)
 
@@ -93,21 +88,13 @@ class EpsilonGreedyActionSelector():
         masked_q_values = agent_inputs.clone()
         masked_q_values[avail_actions == 0.0] = -float("inf")  # should never be selected!
 
-        dist = Categorical(logits=masked_q_values)
-        # picked_actions = dist.sample()
-
         random_numbers = th.rand_like(agent_inputs[:, :, 0])
         pick_random = (random_numbers < self.epsilon).long()
         random_actions = Categorical(avail_actions.float()).sample().long()
 
         picked_actions = pick_random * random_actions + (1 - pick_random) * masked_q_values.max(dim=2)[1]
-
-        # assumes role_outputs are logits
-        log_p = dist.log_prob(picked_actions)
-        return picked_actions, log_p
-
-
-
+        
+        return picked_actions
 
 REGISTRY["epsilon_greedy"] = EpsilonGreedyActionSelector
 
@@ -127,7 +114,7 @@ class GaussianActionSelector():
         else:
             self.dkl = kl_divergence
 
-    def select_action(self, mu, sigma, test_mode=False):
+    def select_action(self, mu, sigma, t_env = None, test_mode=False):
         # expects the following input dimensionalities:
         # mu: [b x a x u]
         # sigma: [b x a x u]
