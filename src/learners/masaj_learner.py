@@ -110,8 +110,9 @@ class MASAJ_Learner:
         #     return
 
         # self.train_encoder(batch, t_env)
-        with th.autograd.set_detect_anomaly(True):
-            self.train_actor(batch, t_env)
+        #with th.autograd.set_detect_anomaly(True):
+        #    self.train_actor(batch, t_env)
+        self.train_actor(batch, t_env)
         self.train_critic(batch, t_env)
         # self.train_decoder(batch, t_env)
 
@@ -166,8 +167,8 @@ class MASAJ_Learner:
 
             mac_out = (pi_act, log_p_out) # [..., n_actions], [..., n_actions]
 
-        self.logger.console_logger.info(f"mac_out[0].shape {mac_out[0].shape}")
-        self.logger.console_logger.info(f"role_out[0].shape {mac_role_out[0].shape}")
+        # self.logger.console_logger.info(f"mac_out[0].shape {mac_out[0].shape}")
+        # self.logger.console_logger.info(f"role_out[0].shape {mac_role_out[0].shape}")
 
 
         # Return output of policy for each agent/role
@@ -412,8 +413,8 @@ class MASAJ_Learner:
         inputs_role = self.role_critic1._build_inputs(batch, bs, max_t)
 
         # inputs [BS, T-1, ...] --> Outputs: [BS*T-1] [BS*TRole, (None or N_roles)]
-        self.logger.console_logger.info(f"inputs[:, :-1].shape {inputs[:, :-1].shape}")
-        self.logger.console_logger.info(f"action.shape {action_out.shape}")
+        # self.logger.console_logger.info(f"inputs[:, :-1].shape {inputs[:, :-1].shape}")
+        # self.logger.console_logger.info(f"action.shape {action_out.shape}")
         # self.logger.console_logger.info(f"role.shape {role.shape}")
         
         # Get Q values with no grad and flattened
@@ -474,9 +475,7 @@ class MASAJ_Learner:
 
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
             self.logger.log_stat("loss_policy", loss_policy.item(), t_env)
-            if self.use_role_value or self.continuous_actions:
-                self.logger.log_stat("loss_value", loss_value.item(), t_env)
-            self.logger.log_stat("agent_grad_norm", agent_grad_norm, t_env)
+            # self.logger.log_stat("agent_grad_norm", agent_grad_norm.item(), t_env)
             if self.use_role_value or self.continuous_actions:
                 self.logger.log_stat("loss_value", loss_value.item(), t_env)
             self.logger.log_stat("agent_grad_norm", agent_grad_norm.item(), t_env)
@@ -539,10 +538,10 @@ class MASAJ_Learner:
                                                 self.n_agents, self.args.gamma,
                                                 self.args.td_lambda)
 
-        self.logger.console_logger.info(f"target_v_act.shape {target_v_act.shape}")
-        self.logger.console_logger.info(f"log_p_action_taken.shape {log_p_action_taken.shape}")
-        self.logger.console_logger.info(f"target_v_role.shape {target_v_role.shape}")
-        self.logger.console_logger.info(f"log_p_role_taken.shape {log_p_role_taken.shape}")
+        # self.logger.console_logger.info(f"target_v_act.shape {target_v_act.shape}")
+        # self.logger.console_logger.info(f"log_p_action_taken.shape {log_p_action_taken.shape}")
+        # self.logger.console_logger.info(f"target_v_role.shape {target_v_role.shape}")
+        # self.logger.console_logger.info(f"log_p_role_taken.shape {log_p_role_taken.shape}")
         #  Eq 9 in FOP Paper
         targets_act = target_v_act - alpha * log_p_action_taken.mean(dim=-1, keepdim=True)
         targets_role = target_v_role - alpha * log_p_role_taken.mean(dim=-1, keepdim=True)
@@ -672,7 +671,7 @@ class MASAJ_Learner:
         Create a tensor representing roles each time step, the output is padded to be of size role_t
         """
         tensor_shape = tensor.shape
-        self.logger.console_logger.info(f"tensor_shape {tensor_shape}")
+        # self.logger.console_logger.info(f"tensor_shape {tensor_shape}")
         roles_shape = list(tensor_shape)
         roles_shape[1] = role_t
 
