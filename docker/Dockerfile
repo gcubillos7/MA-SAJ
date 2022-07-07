@@ -14,6 +14,7 @@ RUN apt-get update -y && apt-get install software-properties-common -y && \
 RUN apt-get update -y && apt-get install -y curl libssl-dev openssl libopenblas-dev \
     libhdf5-dev hdf5-helpers hdf5-tools libhdf5-serial-dev libprotobuf-dev protobuf-compiler git
 
+
 RUN apt-get update
 RUN add-apt-repository ppa:deadsnakes/ppa -y
 RUN apt-get update && apt-get install -y python3.6 python3.6-dev

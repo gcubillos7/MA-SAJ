@@ -26,9 +26,9 @@ class MASAJ_Learner:
 
         self.mac = mac
         self.mac.logger = logger
-        
-        self.target_mac = copy.deepcopy(mac)
-        
+
+        # self.target_mac = copy.deepcopy(mac)
+
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
         self.n_roles = args.n_roles
@@ -49,8 +49,7 @@ class MASAJ_Learner:
         self.target_critic1 = copy.deepcopy(self.critic1)
         self.target_critic2 = copy.deepcopy(self.critic2)
 
-        self.critic_params1 = list(self.critic1.parameters()) + list(self.mixer1.parameters()) + list(
-            self.mixer1.parameters())
+        self.critic_params1 = list(self.critic1.parameters()) + list(self.mixer1.parameters())
         self.critic_params2 = list(self.critic2.parameters()) + list(self.mixer2.parameters())
 
         self.value_params = []
@@ -66,8 +65,10 @@ class MASAJ_Learner:
         self.agent_params = list(mac.parameters())
 
         # Use FOP mixer
+
         self.role_mixer1 = FOPMixer(args, n_actions= self.n_roles)
         self.role_mixer2 = FOPMixer(args, n_actions= self.n_roles)
+
 
         self.role_target_mixer1 = copy.deepcopy(self.role_mixer1)
         self.role_target_mixer2 = copy.deepcopy(self.role_mixer2)
@@ -119,6 +120,7 @@ class MASAJ_Learner:
             self.last_target_update_episode = episode_num
 
     def _get_policy(self, batch, mac, avail_actions, test_mode= False):
+
         """
         Returns
         mac_out: returns distribution of actions .log_p(actions)
@@ -131,6 +133,7 @@ class MASAJ_Learner:
         log_p_role = []
         mac.init_hidden(batch.batch_size)
         for t in range(batch.max_seq_length):
+
             agent_outs, role_outs = self.mac.forward(batch, t=t, test_mode = test_mode)
             mac_out.append(agent_outs[0])
             log_p_out.append(agent_outs[1])
@@ -142,6 +145,7 @@ class MASAJ_Learner:
         if self.use_role_value:
             selected_role, log_p_role = (th.stack(mac_role_out, dim=1), th.stack(log_p_role, dim=1))
             mac_role_out = (selected_role, log_p_role) # [...], [...]
+
         else:
             pi_role = th.stack(mac_role_out, dim=1)
             pi_role = pi_role / pi_role.sum(dim=-1, keepdim=True)
@@ -159,10 +163,12 @@ class MASAJ_Learner:
             pi_act[avail_actions == 0] = 1e-10
             pi = pi_act.clone()
             log_p_out = th.log(pi.clone())
+
             mac_out = (pi_act, log_p_out) # [..., n_actions], [..., n_actions]
 
         self.logger.console_logger.info(f"mac_out[0].shape {mac_out[0].shape}")
         self.logger.console_logger.info(f"role_out[0].shape {mac_role_out[0].shape}")
+
 
         # Return output of policy for each agent/role
         return mac_out, mac_role_out
@@ -174,6 +180,7 @@ class MASAJ_Learner:
         # Input Shape shape [Bs, T,...] [Bs, TRole,...] (for TD lambda) 
         # Output Shape [Bs, T,...] [Bs, TRole,...] (for TD lambda) 
         """
+        
         if self.continuous_actions:
             next_action_input = next_action
         else:
@@ -200,6 +207,7 @@ class MASAJ_Learner:
             q_vals1 = self.target_mixer1(q_vals_taken1, states, actions=next_action_input, vs=vs1) # collapses n_agents
             q_vals2 = self.target_mixer2(q_vals_taken2, states, actions=next_action_input, vs=vs2) # collapses n_agents
             target_q_vals = th.min(q_vals1, q_vals2)
+
 
             # Get Q and V values for roles
             if self.args.use_role_value:
@@ -360,6 +368,22 @@ class MASAJ_Learner:
         # [ep_batch.batch_size, max_t, self.n_agents, -1]
         mac_out, mac_role_out = self._get_policy(batch, self.mac, avail_actions = avail_actions)
 
+        role_mask = role_mask.reshape(-1)
+        mask = mask.reshape(-1)
+
+        avail_actions = batch["avail_actions"]
+
+        # [ep_batch.batch_size, max_t, self.n_agents, -1]
+        mac_out, mac_role_out = self._get_policy(batch, self.mac, avail_actions=avail_actions)
+
+        role_out, log_p_role = mac_role_out
+        if self.use_role_value:
+            log_p_role = log_p_role.reshape(-1)  # [-1]
+            role_entropies = - (th.exp(log_p_role) * log_p_role).mean().item()
+        else:
+            log_p_role = log_p_role.reshape(-1, self.n_roles)  # [-1, self.n_roles]
+            pi_role = role_out.reshape(-1, self.n_roles)
+            role_entropies = - (pi_role * log_p_role).sum(dim=-1).mean().item()
         role_out, log_p_role = mac_role_out
         if self.use_role_value:
             log_p_role = log_p_role.reshape(-1) # [-1]
@@ -398,6 +422,7 @@ class MASAJ_Learner:
         if self.continuous_actions:
             # Get values for act (is not necessary, but it helps with stability)
             v_actions = self.value(inputs[:, :-1])  # inputs [BS, T-1, ...] --> Outputs: [BS*T-1] [BS*TRole, (None or N_roles)]
+
             v_actions = v_actions.reshape(-1)
             act_target = (alpha * log_p_action - q_vals)
             v_act_target = ((v_actions - (q_vals - alpha * log_p_action).detach()) ** 2).sum(dim=-1)
@@ -406,6 +431,7 @@ class MASAJ_Learner:
             act_target = (pi * (alpha * log_p_action - q_vals)).sum(dim=-1)
             v_act_loss = 0
         # act_loss
+
         act_loss = (act_target * mask).sum()/mask.sum()
 
         # As roles are discrete we don't really need a value net as we can estimate V directly
@@ -424,9 +450,9 @@ class MASAJ_Learner:
 
         role_loss = (role_target * role_mask).sum() / role_mask.sum()
 
-        loss_policy = act_loss + role_loss
-        
+        loss_policy = act_loss + role_loss 
         if self.continuous_actions:
+
             kl_loss = self.mac.get_kl_loss()[:, :-1]
             masked_kl_loss = (kl_loss * mask).sum() / mask.sum()
             loss_policy += masked_kl_loss
@@ -451,6 +477,9 @@ class MASAJ_Learner:
             if self.use_role_value or self.continuous_actions:
                 self.logger.log_stat("loss_value", loss_value.item(), t_env)
             self.logger.log_stat("agent_grad_norm", agent_grad_norm, t_env)
+            if self.use_role_value or self.continuous_actions:
+                self.logger.log_stat("loss_value", loss_value.item(), t_env)
+            self.logger.log_stat("agent_grad_norm", agent_grad_norm.item(), t_env)
             self.logger.log_stat("alpha", alpha, t_env)
             self.logger.log_stat("act_entropy", entropies, t_env)
             self.logger.log_stat("role_entropy", role_entropies, t_env)
@@ -467,7 +496,6 @@ class MASAJ_Learner:
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         avail_actions = batch["avail_actions"]
-
         role_rewards, role_states, roles, role_terminated, role_mask = self._build_role_rollout(rewards, states[:,:-1],
                                                                                                 roles_taken, terminated,
                                                                                                 mask)
@@ -563,7 +591,7 @@ class MASAJ_Learner:
 
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
             self.logger.log_stat("loss", loss1.item(), t_env)
-            self.logger.log_stat("grad_norm", grad_norm, t_env)
+            self.logger.log_stat("grad_norm", grad_norm.item(), t_env)
             mask_elems = mask.sum().item()
             self.logger.log_stat("td_error_abs", (masked_td_error1.abs().sum().item() / mask_elems), t_env)
             self.logger.log_stat("q_taken_mean",
@@ -609,14 +637,35 @@ class MASAJ_Learner:
 
     def cuda(self):
         self.mac.cuda()
+
         self.critic1.cuda()
-        self.mixer1.cuda()
-        self.target_critic1.cuda()
-        self.target_mixer1.cuda()
         self.critic2.cuda()
+
+        self.mixer1.cuda()
         self.mixer2.cuda()
+
+        self.target_critic1.cuda()
         self.target_critic2.cuda()
+
+        self.target_mixer1.cuda()
         self.target_mixer2.cuda()
+
+        self.role_mixer1.cuda()
+        self.role_mixer2.cuda()
+
+        self.role_target_mixer1.cuda()
+        self.role_target_mixer2.cuda()
+
+        self.role_critic1.cuda()
+        self.role_critic2.cuda()
+
+        self.role_target_critic1.cuda()
+        self.role_target_critic2.cuda()
+
+        if self.continuous_actions:
+            self.value.cuda()
+        if self.use_role_value:
+            self.role_value.cuda()
 
     def _to_role_tensor(self, tensor, role_t, T_max_1):
         """
@@ -626,6 +675,7 @@ class MASAJ_Learner:
         self.logger.console_logger.info(f"tensor_shape {tensor_shape}")
         roles_shape = list(tensor_shape)
         roles_shape[1] = role_t
+
         tensor_out = th.zeros(roles_shape, dtype = tensor.dtype).to(self.device)
         tensor_out[:, :T_max_1] = tensor.detach().clone()
 
@@ -651,7 +701,7 @@ class MASAJ_Learner:
         # roles (actions)
         roles = self._to_role_tensor(roles_taken, role_t, T_max_1)
         roles = roles.view(bs, role_at, self.role_interval, self.n_agents, -1)[:, :, 0]
-        
+
         # states_shape_o = roles_taken.shape  # 
         # bs = roles_shape_o[0]  # batch size
         # T_max = states_shape_o[1]  # T - 1
