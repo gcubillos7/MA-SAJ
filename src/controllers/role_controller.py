@@ -87,6 +87,7 @@ class ROLEMAC:
             
             if self.use_role_value:
                 role_outputs = selected_roles
+                log_p_role = log_p_role.view(batch_size, self.n_agents)
             else:
                 role_outputs = self.softmax_roles(role_outputs, batch_size, test_mode) 
                 log_p_role = None

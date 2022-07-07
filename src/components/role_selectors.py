@@ -47,13 +47,14 @@ class MultinomialRoleSelector(nn.Module):
         else:
             self.epsilon = self.schedule.finish
 
+        dist = Categorical(logits=masked_policies)
+
         if test_mode and self.test_greedy:
             picked_roles = masked_policies.max(dim=1)[1]
-            return picked_roles, None
+            log_p_role = dist.log_prob(picked_roles)
+            return picked_roles, log_p_role
         else:
-            dist = Categorical(logits=masked_policies)
             picked_roles = dist.sample()
-
             # random_numbers = th.rand_like(agent_inputs[:, :, 0])
             random_numbers = th.rand_like(agent_inputs[:, 0])
             pick_random = (random_numbers < self.epsilon).long()
