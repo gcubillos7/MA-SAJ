@@ -232,6 +232,8 @@ def run_sequential(args, logger):
         episode += args.batch_size_run
 
         if (runner.t_env - last_log_T) >= args.log_interval:
+            print(type(episode))
+            print(type(runner.t_env))
             logger.log_stat("episode", episode, runner.t_env)
             logger.print_recent_stats()
             last_log_T = runner.t_env

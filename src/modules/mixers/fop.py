@@ -58,8 +58,8 @@ class FOPMixer(nn.Module):
         
         for head_key, head_agents, head_action in zip(head_keys, head_agents, head_actions):
             key = th.abs(head_key).repeat(1, self.n_agents) + 1e-10
-            agents = F.sigmoid(head_agents)
-            action = F.sigmoid(head_action)
+            agents = th.sigmoid(head_agents)
+            action = th.sigmoid(head_action)
             weights = key * agents * action
             lambda_weights.append(weights)
             

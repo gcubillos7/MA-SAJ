@@ -43,15 +43,42 @@ class ROLEMAC:
 
         self.kl_loss = None
 
+<<<<<<< Updated upstream
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         # Return valid actions (in action space)
         (actions, _), (selected_role, _) = self.forward(ep_batch, t_ep, test_mode=test_mode, t_env=t_env)
         return actions, selected_role
+=======
+        self.actions_forward = self.continuos_actions_forward if self.continuous_actions else self.discrete_actions_forward
+        self.logger = None
+
+    def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
+        # Return valid actions (in action space)
+        (agent_outputs, _), (_, _) = self.forward(ep_batch, t=t_ep, test_mode=test_mode, t_env=t_env)
+
+        if self.continuous_actions:
+            return agent_outputs, self.selected_roles
+        else:
+            avail_actions = ep_batch["avail_actions"][:, t_ep]
+            # TODO: Implement action spaces (as in RODE)
+            # TODO: Make log probs aware of role_avail_actions
+            chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs], t_env,
+                                                                test_mode=test_mode)
+
+            return chosen_actions, self.selected_roles
+>>>>>>> Stashed changes
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
         avail_actions = ep_batch["avail_actions"][:, t]
+<<<<<<< Updated upstream
         # avail_actions = avail_actions.reshape(ep_batch.batch_size * self.n_agents, -1)
         agent_inputs = self._build_inputs(ep_batch, t)
+=======
+
+        agent_inputs = self._build_inputs(ep_batch, t)
+        batch_size = ep_batch.batch_size
+        self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
+>>>>>>> Stashed changes
 
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
         selected_roles = None
@@ -65,14 +92,72 @@ class ROLEMAC:
                                                                         t_env=t_env)
             self.selected_roles = selected_roles
 
+<<<<<<< Updated upstream
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
 
+=======
+            selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
+
+            if self.use_role_value:
+                role_outputs = selected_roles
+                log_p_role = log_p_role.view(batch_size, self.n_agents)
+            else:
+                role_outputs = self.softmax_roles(role_outputs, batch_size, test_mode)
+                log_p_role = None
+
+        # compute individual hidden_states for each agent
+        self.hidden_states = self.agent(agent_inputs, self.hidden_states)
+
+        (actions, log_p_action) = self.actions_forward(batch_size, avail_actions, t_env, test_mode)
+
+        return (actions, log_p_action), (role_outputs, log_p_role)
+
+    def softmax_roles(self, role_outs, batch_size, test_mode):
+
+        role_outs = F.softmax(role_outs, dim=-1)
+
+        if not test_mode:
+            # Epsilon floor
+            epsilon_action_num = role_outs.size(-1)
+
+            role_outs = ((1 - self.action_selector.epsilon) * role_outs
+                         + th.ones_like(role_outs) * self.role_selector.epsilon / epsilon_action_num)
+
+        return role_outs.view(batch_size, self.n_agents, -1)
+
+    def softmax_actions(self, agent_outs, batch_size, avail_actions, test_mode):
+        # Asumes that action selector is multinomial
+        if getattr(self.args, "mask_before_softmax", True):
+            # Make the logits for unavailable actions very negative to minimise their affect on the softmax
+            reshaped_avail_actions = avail_actions.reshape(batch_size * self.n_agents, -1)
+            agent_outs[avail_actions == 0] = -1e11
+
+        agent_outs = F.softmax(agent_outs, dim=-1)
+        if not test_mode:
+            # Epsilon floor
+            epsilon_action_num = agent_outs.size(-1)
+            if getattr(self.args, "mask_before_softmax", True):
+                # With probability epsilon, we will pick an available action uniformly
+                epsilon_action_num = reshaped_avail_actions.sum(dim=1, keepdim=True).float()
+
+            agent_outs = ((1 - self.action_selector.epsilon) * agent_outs
+                          + th.ones_like(agent_outs) * self.action_selector.epsilon / epsilon_action_num)
+
+            if getattr(self.args, "mask_before_softmax", True):
+                # Zero out the unavailable actions
+                agent_outs[reshaped_avail_actions == 0] = 0.0
+
+        return agent_outs.view(batch_size, self.n_agents, -1)
+
+    def continuos_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
+>>>>>>> Stashed changes
         actions, log_p_action, kl_loss = [], [], []
         dkl_loss = None
         # compute individual q-values for each agent
         for role_i in range(self.n_roles):
             # [bs * n_agents, n_actions]
+<<<<<<< Updated upstream
             if not self.continuous_actions:
                 dot = self.roles[role_i](self.hidden_states, self.action_repr)
                 log_p_ac = F.log_softmax(dot, dim=-1).reshape(ep_batch.batch_size, self.n_agents, -1)
@@ -83,15 +168,43 @@ class ROLEMAC:
                 latent_mu, latent_std = self.roles[role_i](self.hidden_states, self.action_repr)
                 prior = self.roles[role_i].prior
                 pi_action, log_p_action_taken, dkl_loss = self.action_selector(latent_mu, latent_std, prior)
+=======
+            dist_params = self.roles[role_i](self.hidden_states, self.action_repr)
+            prior = self.roles[role_i].prior
+            pi_action, log_p_action_taken, dkl_loss = self.action_selector(*dist_params, prior=prior,
+                                                                           test_mode=test_mode)
+
+>>>>>>> Stashed changes
             actions.append(pi_action)
             log_p_action.append(log_p_action_taken)
             kl_loss.append(dkl_loss)
 
+<<<<<<< Updated upstream
         # actions without stack, list with len == n_roles, action=[bs, n_agents]
         # actions = th.stack(actions, dim=1)  # [bs*n_agents, n_roles, n_actions] actually [bs, n_roles, n_agents]
         if self.continuous_actions:
             kl_loss = th.stack(kl_loss, dim=1)  # [bs*n_agents, n_roles, n_actions]
             kl_loss = th.gather(kl_loss, 1, self.selected_roles)
+=======
+        kl_loss = th.stack(kl_loss, dim=-1)  # [bs*n_agents, n_roles]
+        kl_loss = kl_loss.view(batch_size * self.n_agents, -1)
+        kl_loss = kl_loss.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
+        kl_loss = kl_loss[:, 0]
+        kl_loss = kl_loss.view(batch_size, self.n_agents)
+        self.kl_loss = kl_loss
+
+        log_p_action = th.stack(log_p_action, dim=-1)  # [bs*n_agents, n_roles]
+        log_p_action = log_p_action.view(batch_size * self.n_agents, -1)
+        log_p_action = log_p_action.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
+        log_p_action = log_p_action[:, 0]
+        log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]     
+
+        actions = th.stack(actions, dim=-1)  # [bs*n_agents, dim_actions, n_roles]
+        actions = actions.view(batch_size * self.n_agents, self.n_actions, -1)
+        actions = actions.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=-1)
+        actions = actions[:, 0]
+        actions = actions.view(batch_size, self.n_agents, self.n_actions, -1)
+>>>>>>> Stashed changes
 
         # log_p_action = th.stack(log_p_action, dim=1)  # [bs*n_agents, n_roles, n_actions]
 
@@ -100,11 +213,20 @@ class ROLEMAC:
         # [bs * n_agents]
         # [bs * n_agents, n_roles , 1]
 
+<<<<<<< Updated upstream
         # actions = actions.view(ep_batch.batch_size, self.n_agents, -1)  # expected [bs, n_agents, 1], actually [bs,
         # n_agents, n_roles]
         # -------------NEW-----------------------------------------
         actions = th.stack(actions, dim=-1)  # [bs, n_agents, n_roles]
         actionsv2 = th.zeros([ep_batch.batch_size, self.n_agents, 1])
+=======
+        pi = th.stack(pi, dim=-1)  # [batch_size, self.n_agents, self.n_actions, n_roles]
+        pi = pi.view(batch_size * self.n_agents, self.n_actions,
+                     -1)  # [batch_size*self.n_agents*self.n_actions, n_roles]
+        pi = pi.gather(index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles),
+                       dim=-1)
+        pi = pi[..., 0]
+>>>>>>> Stashed changes
 
         for i in range(len(actions)):
             k = 0
