@@ -8,7 +8,7 @@ from components.episode_buffer import EpisodeBatch
 from modules.critics.masaj import MASAJCritic, MASAJRoleCritic
 from modules.mixers.fop import FOPMixer
 from utils.rl_utils import build_td_lambda_targets
-from torch.optim import RMSprop
+from torch.optim import RMSprop, Adam
 from modules.critics.value import ValueNet, RoleValueNet
 
 
@@ -291,6 +291,7 @@ class MASAJ_Learner:
         q_vals2_role = self.role_mixer2(q_role_taken2, role_states, actions=role_input, vs=v_role2)
 
         return (q_vals1, q_vals2), (q_vals1_role, q_vals2_role)
+
     # self._get_q_values_no_grad(inputs[:, :-1], inputs_role, action_out, role_out)
     def _get_q_values_no_grad(self, inputs, inputs_role, action, role):
         """
@@ -408,7 +409,7 @@ class MASAJ_Learner:
 
             v_actions = v_actions.reshape(-1)
             act_target = (alpha * log_p_action - q_vals)
-            v_act_target = ((v_actions - (q_vals - alpha * log_p_action).detach()) ** 2).sum(dim=-1)
+            v_act_target = ((v_actions - (q_vals - alpha * log_p_action).detach()) ** 2)  # .sum(dim=-1)
             v_act_loss = (v_act_target * mask).sum() / mask.sum()
         else:
             act_target = (pi * (alpha * log_p_action - q_vals)).sum(dim=-1)
@@ -420,10 +421,12 @@ class MASAJ_Learner:
         if self.use_role_value:
             # Move V towards Q
             v_role = self.role_value(inputs_role).reshape(-1)
-            v_role = v_role.reshape(-1)
-            role_target = (alpha * log_p_role - q_vals_role).sum(dim=-1)
-            v_role_target = ((v_role - (q_vals_role - alpha * log_p_role).detach()) ** 2).sum(dim=-1)
+            # v_role = v_role.reshape(-1)
+            role_target = (alpha * log_p_role - q_vals_role)  # .sum(dim=-1)
+            # v_role_target = (((q_vals_role - alpha * log_p_role).detach() - v_role) ** 2)  # .sum(dim=-1)
+            v_role_target = F.mse_loss(v_role, (q_vals_role - alpha * log_p_role).detach(),  reduction='none')
             v_role_loss = (v_role_target * role_mask).sum() / role_mask.sum()
+            # print('v_role', v_role_loss)
         else:
             # policy target for discrete actions (from Soft Actor-Critic for Discrete Action Settings)
             role_target = (pi_role * (alpha * log_p_role - q_vals_role)).sum(dim=-1)
@@ -431,7 +434,7 @@ class MASAJ_Learner:
             v_role_loss = 0
 
         role_loss = (role_target * role_mask).sum() / role_mask.sum()
-
+        # print('role loss', role_loss)
         loss_policy = act_loss + role_loss
         # self.logger.console_logger.info(f"loss_policy {loss_policy}")
         if self.continuous_actions:
