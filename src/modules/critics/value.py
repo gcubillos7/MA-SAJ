@@ -11,11 +11,14 @@ class ValueNet(nn.Module):
         self.n_agents = args.n_agents
 
         # obs + n_agents
-        input_shape = self._get_input_shape(scheme)
+        obs_shape = self._get_input_shape(scheme)
+        self.input_shape = obs_shape
+        if args.obs_role:
+            self.input_shape += args.n_roles
         self.output_type = "v"
 
         # Set up network layers
-        self.fc1 = nn.Linear(input_shape, 64)
+        self.fc1 = nn.Linear(self.input_shape, 64)
         self.fc2 = nn.Linear(64, 64)
         self.fc3 = nn.Linear(64, 1)
 

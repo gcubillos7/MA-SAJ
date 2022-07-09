@@ -1,50 +1,51 @@
-# multinomial action selector
-# action_selector: "gaussian_latent" # MAMUJOCO
-action_selector: "epsilon_greedy"
-# TODO CAMBIAR
+# Static
+name: "masaj"
+runner: "masaj"
+mac: "role_mac"
+learner: "masaj_learner"
+agent: "rode"
+role_selector: "multinomial_role"
+role: "msj_discrete" 
+
+# Ambient dependent
+continuous_actions: False
+action_selector: "multinomial" 
+agent_output_type: "pi_logits" # only discrete
+
+# Encoder-decoder for actions
 action_encoder: "obs_reward"
 
+# Epsilon scheduler and masking
 epsilon_start: 1.0
 epsilon_finish: .05
 epsilon_anneal_time: 70000
 epsilon_anneal_time_exp: 70000
-mask_before_softmax: False
+mask_before_softmax: True
 
-runner: "masaj"
-
-# update the target network every {} training steps
+# Learners hyperparameters
+batch_size: 32
 target_update_interval: 200
-
 lr: 0.0005
 c_lr: 0.0005
-v_lr: 0.0005 # ????
-
-agent_output_type: "pi_logits"
+v_lr: 0.0005
 td_lambda: 0.8
-learner: "masaj_learner"
-
-name: "masaj"
-buffer_size: 5000
-
-mixing_embed_dim: 32
-n_head: 4  
-burn_in_period: 100
-
-
-
-mac: "role_mac"
-agent: "rode"
-role: "msj_discrete" #SMAC => msj_discrete
-role_selector: "multinomial_role"
-bi_opt: False
-n_role_clusters: 5
 role_interval: 5
+role_action_spaces_update_start: 0
+use_role_value: True
+
+# Network structure hyper-parameters
+obs_role: True # Pass roles as observations to critics
+n_roles: 3
 state_latent_dim: 32
 action_latent_dim: 20
-role_action_spaces_update_start: 0
-use_role_value: False #True
-n_roles: 3 #n_roles
-# per_role_q: True # ?? see critic
+mixing_embed_dim: 32
+n_head: 4  
 
+# Buffer hyper-parameters
+buffer_size: 5000
+burn_in_period: 100
 
-batch_size: 2
+# Logging parameters
+log_interval: 1000 # Log summary of stats after every {} timesteps
+runner_log_interval: 1000 # Log runner stats (not test stats) every {} timesteps
+learner_log_interval: 1000 # Log training stats every {} timesteps

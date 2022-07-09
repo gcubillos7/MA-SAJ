@@ -16,6 +16,9 @@ class MASAJCritic(nn.Module):
         self.output_type = "q"
         obs_shape = self._get_input_shape(scheme)
         self.input_shape = obs_shape + self.n_actions if args.continuous_actions else obs_shape
+        if args.obs_role:
+            self.input_shape += args.n_roles
+
         self.dim_out = 1 if args.continuous_actions else self.n_actions
         # Set up network layers
         self.fc1 = nn.Linear(self.input_shape, 64)
@@ -25,7 +28,7 @@ class MASAJCritic(nn.Module):
     def forward(self, inputs, actions=None):
         if actions is not None:
             inputs = th.cat([inputs, actions], dim=-1)
-
+        
         x = F.relu(self.fc1(inputs))
         x = F.relu(self.fc2(x))
         q = self.fc3(x)
@@ -35,11 +38,11 @@ class MASAJCritic(nn.Module):
 
         inputs = [batch["obs"],
                   th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1)]
-        # state, obs, action
 
         # inputs[0] --> [bs, max_t, n_agents, obs]
         # inputs[1] --> [bs, max_t, n_agents, n_agents]
 
+        # inputs[2] --> [bs, max_t, n_agents, n_roles]    
         # one hot encoded position of agent + state
         inputs = th.cat([x.reshape(bs, max_t, self.n_agents, -1) for x in inputs], dim=-1)
 
@@ -89,12 +92,13 @@ class MASAJRoleCritic(nn.Module):
         t_role = inputs.shape[1]
         inputs = [inputs,
                   th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, t_role, -1, -1)]
+
         # state, obs, action
 
         # inputs[0] --> [bs, max_t, n_agents, obs]
         # inputs[1] --> [bs, max_t, n_agents, n_agents]
 
-        # one hot encoded position of agent + state
+        # one hot encoded position of role + agent + state
         inputs = th.cat([x.reshape(bs, t_role, self.n_agents, -1) for x in inputs], dim=-1)
 
         return inputs  # [bs, max_t, n_agents, n_agents + n_obs]

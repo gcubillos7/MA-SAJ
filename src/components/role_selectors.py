@@ -15,7 +15,9 @@ class MultinomialRoleSelector(nn.Module):
                                             nn.ReLU(),
                                             nn.Linear(2 * args.rnn_hidden_dim, args.action_latent_dim))
 
-        self.schedule = DecayThenFlatSchedule(args.epsilon_start, args.epsilon_finish, args.epsilon_anneal_time,
+        self.schedule = DecayThenFlatSchedule(args.epsilon_start,
+                                              args.epsilon_finish,
+                                              args.epsilon_anneal_time,
                                               args.epsilon_anneal_time_exp,
                                               args.role_action_spaces_update_start,
                                               decay="linear")
@@ -32,6 +34,7 @@ class MultinomialRoleSelector(nn.Module):
         role_latent_reshaped = role_latent.unsqueeze(0).repeat(x.shape[0], 1, 1)  #
 
         dot = th.bmm(role_latent_reshaped, x).squeeze()
+
         return dot
 
     def forward(self, inputs, role_latent):
@@ -39,33 +42,17 @@ class MultinomialRoleSelector(nn.Module):
 
         return dot  # logits # TODO: logp = log softmax(logits)
 
-    def select_role(self, agent_inputs, t_env, test_mode=False):
-        masked_policies = agent_inputs.clone()
-        
+    def select_role(self, role_pis, t_env, test_mode=False):
+        # role_pis [bs*n_agents, n_roles] 
         if t_env is not None:
-            self.epsilon = self.schedule.eval(t_env) 
-        else:
-            self.epsilon = self.schedule.finish
-
-        dist = Categorical(logits = masked_policies)
-
+            self.epsilon = self.schedule.eval(t_env)
+        dist = Categorical(role_pis)
         if test_mode and self.test_greedy:
-            picked_roles = masked_policies.max(dim=1)[1]
-            log_p_role = dist.log_prob(picked_roles)
-            return picked_roles, log_p_role
+            picked_roles = role_pis.max(dim=1)[1]
         else:
-            picked_roles = dist.sample()
-            # random_numbers = th.rand_like(agent_inputs[:, :, 0])
-            random_numbers = th.rand_like(agent_inputs[:, 0])
-            pick_random = (random_numbers < self.epsilon).long()
-            random_roles = Categorical(th.ones(masked_policies.shape).float().to(self.args.device)).sample().long()
-
-            picked_roles = pick_random * random_roles + (1 - pick_random) * picked_roles
-
-            # assumes role_outputs are logits
-            log_p_role = dist.log_prob(picked_roles)
-
-            return picked_roles, log_p_role
+            picked_roles = dist.sample().long()
+        log_p_role = dist.log_prob(picked_roles)
+        return picked_roles, log_p_role
 
 
 REGISTRY["multinomial_role"] = MultinomialRoleSelector

@@ -36,7 +36,6 @@ class ROLEMAC:
         self.hidden_states = None
         self.role_hidden_states = None
         self.selected_roles = None
-        self.n_clusters = args.n_role_clusters
 
         self.role_latent = th.rand(self.n_roles, self.args.action_latent_dim).to(args.device)
         self.action_repr = th.rand(self.n_actions, self.args.action_latent_dim).to(args.device)
@@ -58,13 +57,13 @@ class ROLEMAC:
             avail_actions = ep_batch["avail_actions"][:, t_ep]
             # TODO: Implement action spaces (as in RODE)
             # TODO: Make log probs aware of role_avail_actions
-
             chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs], t_env,
                                                                 test_mode=test_mode)
 
             return chosen_actions, self.selected_roles
 
     def forward(self, ep_batch, t, test_mode=False, t_env=None):
+        
         # self.action_selector.logger = self.logger
         avail_actions = ep_batch["avail_actions"][:, t]
 
@@ -75,33 +74,30 @@ class ROLEMAC:
         agent_inputs = self._build_inputs(ep_batch, t)
         batch_size = ep_batch.batch_size
 
-        role_outputs = None
+        selected_roles = None
         log_p_role = None
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-
+            role_pis =  self.softmax_roles(role_outputs, batch_size, test_mode = test_mode)
             # Get Index of the role of each agent
-            selected_roles, log_p_role = self.role_selector.select_role(role_outputs, test_mode=test_mode,
+            selected_roles, log_p_role = self.role_selector.select_role(role_pis, test_mode=test_mode,
                                                                         t_env=t_env)
 
-            self.selected_roles = selected_roles
-
+            self.selected_roles = selected_roles.squeeze(-1)
             selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
 
             if self.use_role_value:
-                role_outputs = selected_roles
                 log_p_role = log_p_role.view(batch_size, self.n_agents)
-            else:
-                role_outputs = self.softmax_roles(role_outputs, batch_size, test_mode)
-                log_p_role = None
+            else: 
+                log_p_role = th.log(role_pis.view(batch_size, self.n_agents, -1))
 
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
 
         (actions, log_p_action) = self.actions_forward(batch_size, avail_actions, t_env, test_mode)
 
-        return (actions, log_p_action), (role_outputs, log_p_role)
+        return (actions, log_p_action), (selected_roles, log_p_role)
 
     def softmax_roles(self, role_outs, batch_size, test_mode):
 
@@ -110,18 +106,17 @@ class ROLEMAC:
         if not test_mode:
             # Epsilon floor
             epsilon_action_num = role_outs.size(-1)
-
+            
             role_outs = ((1 - self.action_selector.epsilon) * role_outs
                          + th.ones_like(role_outs) * self.role_selector.epsilon / epsilon_action_num)
 
-        return role_outs.view(batch_size, self.n_agents, -1)
+        return role_outs
 
     def softmax_actions(self, agent_outs, batch_size, avail_actions, test_mode):
-        # Asumes that action selector is multinomial
         if getattr(self.args, "mask_before_softmax", True):
-            # Make the logits for unavailable actions very negative to minimise their affect on the softmax
+            # Make the logits for unavailable actions very negative to minimize their affect on the softmax
             reshaped_avail_actions = avail_actions.reshape(batch_size * self.n_agents, -1)
-            agent_outs[avail_actions == 0] = -1e11
+            agent_outs[reshaped_avail_actions == 0] = -1e11
 
         agent_outs = F.softmax(agent_outs, dim=-1)
         if not test_mode:

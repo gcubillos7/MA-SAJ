@@ -10,20 +10,6 @@ from sklearn.cluster import KMeans
 import numpy as np
 import copy
 
-
-# DKL(z , z_rol)
-# P --> z -->  f^{-1}(z) --> A
-
-# Dim A  == Dim Z
-
-# A --f(a)-> Z ~ GMM -> C
-
-# z ~ N --f^{-1}(z)--> A 
-
-
-#      |-> Decoder -> A
-# A -> Z -> C -> (r, st1)
-
 # This multi-agent controller shares parameters between agents
 class RODEMAC:
     def __init__(self, scheme, groups, args):
