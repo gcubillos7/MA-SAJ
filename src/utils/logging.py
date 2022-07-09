@@ -54,12 +54,14 @@ class Logger:
 # set up a custom logger
 def get_logger():
     logger = logging.getLogger()
-    logger.handlers = []
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
     ch = logging.StreamHandler()
     formatter = logging.Formatter('[%(levelname)s %(asctime)s] %(name)s %(message)s', '%H:%M:%S')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     #logger.setLevel('DEBUG') # TODO:uncomment this 
     logger.setLevel(logging.INFO) # TODO: delete this 
+    
     return logger
 

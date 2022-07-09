@@ -101,8 +101,9 @@ def run_sequential(args, logger):
     args.n_actions = env_info["n_actions"]
     args.state_shape = env_info["state_shape"]
     args.obs_shape = env_info["obs_shape"]
-    # args.actions_dtype = env_info["actions_dtype"] # not available in SMAC
-    action_dtype = th.long  # if not args.actions_dtype == np.float32 else th.float
+    args.actions_dtype = env_info.get("actions_dtype", np.int8) 
+    action_dtype = th.long if not args.actions_dtype == np.float32 else th.float
+    
     # Default/Base scheme
     scheme = {
         "state": {"vshape": env_info["state_shape"]},
@@ -118,12 +119,16 @@ def run_sequential(args, logger):
         "agents": args.n_agents
     }
 
-    # preprocess = None if args.actions_dtype == np.float32 else {  # Not available in SMAC
-    #    "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])}
-    preprocess = {
-        "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)]),
+    if action_dtype == th.long:
+        preprocess = {
+            "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)]),
+            "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
+        } 
+
+    else:
+        preprocess = {
         "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
-    }
+        }
 
     buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
                           args.burn_in_period,

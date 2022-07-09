@@ -12,8 +12,12 @@ from utils.logging import get_logger
 import yaml
 
 from run import run
+# (default: ‘fd’ (linux/osx) or ‘sys’ (windows)) configure how stdout/stderr are captured. [‘no’, ‘sys’, ‘fd’]
+if sys.platform == "linux":
+    SETTINGS['CAPTURE_MODE'] = "fd" 
+else:
+    SETTINGS['CAPTURE_MODE'] = "sys"
 
-SETTINGS['CAPTURE_MODE'] = "fd" # set to "no" if you want to see stdout/stderr in console
 logger = get_logger()
 
 ex = Experiment("pymarl")
