@@ -124,7 +124,6 @@ def run_sequential(args, logger):
             "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)]),
             "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
         } 
-
     else:
         preprocess = {
         "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])

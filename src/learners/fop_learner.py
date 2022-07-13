@@ -147,7 +147,7 @@ class FOP_Learner:
 
         pi_taken = th.gather(pi, dim=3, index=next_actions).squeeze(3)[:, 1:]
         pi_taken[mask.expand_as(pi_taken) == 0] = 1.0
-        log_pi_taken = th.log(pi_taken)
+        log_pi_taken = th.log(pi_taken) 
 
         target_inputs = self.target_critic1._build_inputs(batch, bs, max_t)
         target_q_vals1 = self.target_critic1.forward(target_inputs).detach()
@@ -169,7 +169,7 @@ class FOP_Learner:
         target_v = build_td_lambda_targets(rewards, terminated, mask, target_qvals, self.n_agents, self.args.gamma,
                                            self.args.td_lambda)
         # [BS, T-1, n_agents] 
-        targets = target_v - alpha * log_pi_taken.mean(dim=-1, keepdim=True)
+        targets = target_v - alpha * log_pi_taken.mean(dim=-1, keepdim=True) 
 
         inputs = self.critic1._build_inputs(batch, bs, max_t)
         q_vals1 = self.critic1.forward(inputs)
