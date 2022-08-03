@@ -30,13 +30,13 @@ class BasicMAC:
 
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":
-
             if getattr(self.args, "mask_before_softmax", True):
                 # Make the logits for unavailable actions very negative to minimise their affect on the softmax
                 reshaped_avail_actions = avail_actions.reshape(ep_batch.batch_size * self.n_agents, -1)
                 agent_outs[reshaped_avail_actions == 0] = -1e11
 
             agent_outs = th.nn.functional.softmax(agent_outs, dim=-1)
+
             if not test_mode:
                 # Epsilon floor
                 epsilon_action_num = agent_outs.size(-1)

@@ -1,6 +1,6 @@
-from src.envs import REGISTRY as env_REGISTRY
+from envs import REGISTRY as env_REGISTRY
 from functools import partial
-from src.components.episode_buffer import EpisodeBatch
+from components.episode_buffer import EpisodeBatch
 import torch as th
 import numpy as np
 import copy

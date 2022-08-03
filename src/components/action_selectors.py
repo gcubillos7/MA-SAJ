@@ -9,7 +9,7 @@ import numpy as np
 
 REGISTRY = {}
 
-'''
+
 class GumbelSoftmax():
     def __init__(self, args):
         self.args = args
@@ -34,14 +34,14 @@ class GumbelSoftmax():
         return picked_actions
 
 REGISTRY["gumbel"] = GumbelSoftmax
-'''
+
 
 
 class MultinomialActionSelector():
 
     def __init__(self, args):
         self.args = args
-
+        
         self.schedule = DecayThenFlatSchedule(args.epsilon_start,
                                 args.epsilon_finish, args.epsilon_anneal_time,
                                 time_length_exp = args.epsilon_anneal_time_exp,
@@ -52,8 +52,10 @@ class MultinomialActionSelector():
         self.test_greedy = getattr(args, "test_greedy", True)
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
+        
         masked_policies = agent_inputs.clone()
-        masked_policies[avail_actions == 0.0] = 0.0
+        masked_policies[avail_actions == 0] = 0.0
+
         if t_env is not None:
             self.epsilon = self.schedule.eval(t_env)
 
@@ -166,7 +168,7 @@ class GaussianLatentActionSelector():
         for param in self.decoder.parameters():
             param.requires_grad = False
 
-    def select_action(self, mu, sigma, prior, test_mode=False):
+    def select_action(self, mu, sigma, t_env, prior, test_mode=False):
         dkl_loss = None
         latent_dist = Normal(mu, sigma)
         latent_action = mu if test_mode else latent_dist.sample()

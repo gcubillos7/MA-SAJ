@@ -1,8 +1,10 @@
+from typing import Callable
+from matplotlib.style import available
 from envs import REGISTRY as env_REGISTRY
 from functools import partial
 from components.episode_buffer import EpisodeBatch
 import numpy as np
-
+import copy
 
 class EpisodeRunner:
 
@@ -12,8 +14,16 @@ class EpisodeRunner:
         self.batch_size = self.args.batch_size_run
         assert self.batch_size == 1
 
-        self.env = env_REGISTRY[self.args.env](**self.args.env_args)
+        self.batch_size = self.args.batch_size_run
+        assert self.batch_size == 1
+
+        if 'sc2' in self.args.env:
+            self.env = env_REGISTRY[self.args.env](**self.args.env_args)
+        else:
+            self.env = env_REGISTRY[self.args.env](env_args=self.args.env_args, args=args)
+
         self.episode_limit = self.env.episode_limit
+
         self.t = 0
 
         self.t_env = 0
@@ -25,12 +35,29 @@ class EpisodeRunner:
 
         # Log the first run
         self.log_train_stats_t = -1000000
-
+        self.step: Callable = self.step_particle if self.args.env in ["particle"] else self.step_default 
+    
     def setup(self, scheme, groups, preprocess, mac):
         self.new_batch = partial(EpisodeBatch, scheme, groups, self.batch_size, self.episode_limit + 1,
                                  preprocess=preprocess, device=self.args.device)
+        
+        if self.args.mac =='rode_mac':
+            self.get_post_transition = self.post_transition
+        elif self.args.mac == 'role_mac':
+            self.get_post_transition = self.role_post_transition
+        else:
+            self.get_post_transition = self.rode_post_transition
         self.mac = mac
 
+    def role_post_transition(self, policy_out):
+        return {'actions': policy_out[0], 'roles': policy_out[1]}
+
+    def rode_post_transition(self, policy_out):
+        return {'actions': policy_out[0], 'roles': policy_out[1], 'role_avail_actions': policy_out[2]}
+    
+    def post_transition(self, policy_out):
+        return {'actions': policy_out} 
+    
     def get_env_info(self):
         return self.env.get_env_info()
 
@@ -45,6 +72,24 @@ class EpisodeRunner:
         self.env.reset()
         self.t = 0
 
+    def _get_scheme_post_transition(self, scheme):
+        default_keys = {'state', 'avail_actions', 'obs'}
+        post_transition_keys = set(scheme.keys) - default_keys
+        return post_transition_keys
+
+    def step_particle(self, actions):
+        cpu_actions = copy.deepcopy(actions).to("cpu").numpy()
+        reward, terminated, env_info = self.env.step(cpu_actions)
+        if isinstance(reward, (list, tuple)):
+            assert (reward[1:] == reward[:-1]), "reward has to be cooperative!"
+            reward = reward[0]
+            
+        return reward, terminated, env_info
+
+    def step_default(self, actions):
+        reward, terminated, env_info = self.env.step(actions)
+        return reward, terminated, env_info
+        
     def run(self, test_mode=False):
         self.reset()
 
@@ -63,20 +108,14 @@ class EpisodeRunner:
 
             # Pass the entire batch of experiences up till now to the agents
             # Receive the actions for each agent at this timestep in a batch of size 1
-            actions, roles = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, test_mode=test_mode)
-
-            reward, terminated, env_info = self.env.step(actions[0])
+            policy_out = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, test_mode=test_mode)
+            post_transition_data = self.get_post_transition(policy_out)
+            actions = post_transition_data['actions']
+            reward, terminated, env_info = self.step(actions[0])
             episode_return += reward
-
-            post_transition_data = {
-                "actions": actions,
-                "roles": roles,
-                "reward": [(reward,)],
-                "terminated": [(terminated != env_info.get("episode_limit", False),)],
-            }
-
+            post_transition_data["reward"] = [(reward,)]
+            post_transition_data["terminated"] = [(terminated != env_info.get("episode_limit", False),)]                                    
             self.batch.update(post_transition_data, ts=self.t)
-
             self.t += 1
 
         last_data = {
@@ -84,11 +123,15 @@ class EpisodeRunner:
             "avail_actions": [self.env.get_avail_actions()],
             "obs": [self.env.get_obs()]
         }
+
         self.batch.update(last_data, ts=self.t)
 
         # Select actions in the last stored state
-        actions, roles = self.mac.select_actions(self.batch, t_ep=self.t,
-                                                 t_env=self.t_env, test_mode=test_mode)
+        policy_out = self.mac.select_actions(self.batch, t_ep=self.t,t_env=self.t_env, test_mode=test_mode)
+        post_transition_data = self.get_post_transition(policy_out)
+        post_transition_data["reward"] = [(reward,)]
+        post_transition_data["terminated"] = [(terminated != env_info.get("episode_limit", False),)]                                    
+
         self.batch.update({"actions": actions}, ts=self.t)
 
         cur_stats = self.test_stats if test_mode else self.train_stats
