@@ -572,9 +572,9 @@ class MASAJ_Learner:
             # next_role_role_one_hot_rep [BS, T, n_agents, n_roles]
             next_role_onehot = th.zeros_like(roles_onehot, device = self.device)
             # repeat role taken and pad with zeros
-            next_role_role_one_hot_rep = next_role_role_onehot[..., None].expand(-1, -1, -1, -1, self.role_interval).transpose(1, 3).flatten(-2, -1).transpose(1, 3)
+            # next_role_role_one_hot_rep = next_role_role_onehot[..., None].expand(-1, -1, -1, -1, self.role_interval).transpose(1, 3).flatten(-2, -1).transpose(1, 3)
             # same as 
-            # next_role_role_one_hot_rep = next_role.squeeze(-1).repeat_interleave(self.role_interval, dim = 1)
+            next_role_role_one_hot_rep = next_role_role_onehot.squeeze(-1).repeat_interleave(self.role_interval, dim = 1)
             role_t = min(next_role_role_one_hot_rep.shape[1], next_role_onehot.shape[1])
             next_role_onehot[:, :role_t] = next_role_role_one_hot_rep[:, :role_t]
             target_inputs = th.cat([inputs, next_role_onehot], dim = -1)
