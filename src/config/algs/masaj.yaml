@@ -19,7 +19,7 @@ action_encoder: "obs_reward"
 
 # Epsilon scheduler and masking
 epsilon_start: 1.0
-epsilon_finish: .05
+epsilon_finish: .01
 epsilon_anneal_time: 70000
 epsilon_anneal_time_exp: 70000
 mask_before_softmax: True
