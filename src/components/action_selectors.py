@@ -114,18 +114,14 @@ class GaussianActionSelector():
         # self.act_limit = 1.0
         self.decoder = None
         self.prior = None
-        self.use_latent_normal = args.use_latent_normal
-        if not self.use_latent_normal:
-            self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
-        else:
-            self.dkl = kl_divergence
 
     def select_action(self, mu, sigma, t_env = None, test_mode=False):
         # expects the following input dimensionalities:
         # mu: [b x a x u]
         # sigma: [b x a x u]
-        assert mu.dim() == 3, "incorrect input dim: mu"
-        assert sigma.dim() == 3, "incorrect input dim: sigma"
+        # assert mu.dim() == 3, "incorrect input dim: mu"
+        # assert sigma.dim() == 3, "incorrect input dim: sigma"
+
         sigma = sigma.view(-1, self.args.n_agents, self.args.n_actions, self.args.n_actions)
 
         if test_mode and self.test_greedy:
@@ -136,11 +132,8 @@ class GaussianActionSelector():
                                                       sigma.view(-1,
                                                                  mu.shape[-1],
                                                                  mu.shape[-1]))
-            try:
-                picked_actions = dst.sample().view(*mu.shape)
-            except Exception as e:
-                a = 5
-                pass
+            picked_actions = dst.sample().view(*mu.shape)
+
         return picked_actions
 
 
@@ -186,7 +179,7 @@ class GaussianLatentActionSelector():
         if self.with_logprob:
             pi_action, log_p_pi = self.decoder(latent_action)
             log_p_pi += log_p_latent  # p_latent * p_action
-
+            # squash trick
             log_p_pi -= (2 * (np.log(2) - pi_action - F.softplus(-2 * pi_action))).sum(axis=1)
         else:
             pi_action = self.decoder(latent_action)
