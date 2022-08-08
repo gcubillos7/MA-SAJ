@@ -99,6 +99,7 @@ if __name__ == '__main__':
     logger.info("Saving to FileStorageObserver in results/sacred.")
     file_obs_path = os.path.join(results_path, "sacred")
     ex.observers.append(FileStorageObserver.create(file_obs_path))
-    
+    print('params next')
+    print(params)
     ex.run_commandline(params)
 

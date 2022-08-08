@@ -2,7 +2,6 @@
 env: "sc2"
 name: "masaj"
 runner: "masaj" # "masaj_parallel"
-# batch_size_run: 2 # Number of environments to run in parallel
 mac: "role_mac"
 learner: "masaj_learner"
 agent: "rode"
@@ -19,10 +18,16 @@ action_encoder: "obs_reward"
 
 # Epsilon scheduler and masking
 epsilon_start: 1.0
-epsilon_finish: .05
+epsilon_finish: 0.0
 epsilon_anneal_time: 70000
 epsilon_anneal_time_exp: 70000
 mask_before_softmax: True
+
+# Alpha scheduler
+alpha_anneal_time: 2000000
+alpha_start: 0.5
+alpha_finish: 0.005
+alpha_decay: "exp"
 
 # Learners hyperparameters
 batch_size: 32
@@ -33,22 +38,36 @@ v_lr: 0.0005
 td_lambda: 0.8
 role_interval: 5
 role_action_spaces_update_start: 50000
-use_role_value: False
 
 # Network structure hyper-parameters
-obs_role: True # Pass roles as observations to critics
 n_roles: 3
 n_role_clusters: 5
 state_latent_dim: 32
 action_latent_dim: 20
 mixing_embed_dim: 32
-n_head: 4  
+n_head: 4
+obs_role: True # Pass roles as observations to action critics
+use_role_latent: False # Use role latent as observations (else use one-hot) 
+use_role_value: False # use Q(s,encoded_role) -> 1 and V_rol(s) else use Q(s) -> n_roles  
+relabeling: False
+shared_encoder: True # Share the encoder between policy and prediction model during role discovery phase
+# if (use_role_value) and (use_role_latent) then roles can be added/removed dynamically
+
 
 # Buffer hyper-parameters
 buffer_size: 5000
 burn_in_period: 100
 
 # Logging parameters
-log_interval: 5000 # Log summary of stats after every {} timesteps
-runner_log_interval: 5000 # Log runner stats (not test stats) every {} timesteps
-learner_log_interval: 5000 # Log training stats every {} timesteps
+log_interval: 10000 # Log summary of stats after every {} timesteps
+runner_log_interval: 10000 # Log runner stats (not test stats) every {} timesteps
+learner_log_interval: 10000 # Log training stats every {} timesteps
+
+save_model: True # Save the models to disk
+save_model_interval: 400000 # Save models after this many timesteps
+
+
+# We use k-means clustering when determining role action spaces. The number of clusters, k, is
+# treated as a hyperparameter. Specifically, on maps with homogeneous enemies, we set k to 3, and
+# on maps with heterogeneous enemies, we set k to 5. If the task only involves one enemy, k is set to
+# 2. We can avoid this hyperparameter by using more advanced clustering approaches.

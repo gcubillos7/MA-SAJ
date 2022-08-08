@@ -1,5 +1,6 @@
 import datetime
 import os
+import sys
 import pprint
 import threading
 import time
@@ -60,7 +61,8 @@ def run(_run, _config, _log):
     print("Exiting script")
 
     # Making sure framework really exits
-    os._exit(os.EX_OK)
+    if sys.platform == "linux":
+        os._exit(os.EX_OK)
 
 
 def evaluate_sequential(args, runner):
@@ -119,15 +121,14 @@ def run_sequential(args, logger):
         "agents": args.n_agents
     }
 
+    preprocess = None
+
     if action_dtype == th.long:
         preprocess = {
             "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)]),
-            "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
         } 
-    else:
-        preprocess = {
-        "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
-        }
+    if not getattr(args, 'use_role_latent', False):
+        preprocess["roles"] = ("roles_onehot", [OneHot(out_dim=args.n_roles)])
 
     buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
                           args.burn_in_period,

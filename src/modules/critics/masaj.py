@@ -16,14 +16,20 @@ class MASAJCritic(nn.Module):
         self.output_type = "q"
         obs_shape = self._get_input_shape(scheme)
         self.input_shape = obs_shape + self.n_actions if args.continuous_actions else obs_shape
+            
         if args.obs_role:
-            self.input_shape += args.n_roles
+            if args.use_role_latent:
+                self.input_shape += args.action_latent_dim
+            else:
+                self.input_shape += args.n_roles            
 
+        # Critic Shape
         self.dim_out = 1 if args.continuous_actions else self.n_actions
+        
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, self.dim_out)
+        self.fc1 = nn.Linear(self.input_shape, self.args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(self.args.rnn_hidden_dim, self.args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(self.args.rnn_hidden_dim, self.dim_out)
 
     def forward(self, inputs, actions=None):
         if actions is not None:
@@ -54,7 +60,6 @@ class MASAJCritic(nn.Module):
         input_shape += self.n_agents
         return input_shape  # [n_agents + n_obs]
 
-
 class MASAJRoleCritic(nn.Module):
     def __init__(self, scheme, args):
         super(MASAJRoleCritic, self).__init__()
@@ -65,20 +70,24 @@ class MASAJRoleCritic(nn.Module):
         self.role_interval = args.role_interval
         # obs + n_agents
         obs_shape = self._get_input_shape(scheme)
-        self.input_shape = obs_shape + self.n_roles if args.use_role_value else obs_shape
+        if args.use_role_latent:
+            action_dim = args.action_latent_dim
+        else:
+            action_dim = self.n_roles
+        
+        self.input_shape = obs_shape + action_dim if args.use_role_value else obs_shape
         self.output_type = "q"
 
         self.dim_out = 1 if args.use_role_value else self.n_roles
 
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, self.dim_out)
-
-        # TODO: RNN optional
+        self.fc1 = nn.Linear(self.input_shape, self.args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(self.args.rnn_hidden_dim, self.args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(self.args.rnn_hidden_dim, self.dim_out)
 
     def forward(self, inputs, roles=None):
         if roles is not None:
+            # roles is one-hot encoded
             inputs = th.cat([inputs, roles], dim=-1)  # Similar to ma-saj
         x = F.relu(self.fc1(inputs))
         x = F.relu(self.fc2(x))
@@ -87,18 +96,17 @@ class MASAJRoleCritic(nn.Module):
         return q  # bs, role_t, n_agents, n_actions
 
     def _build_inputs(self, batch, bs, max_t):
+        # take obs every role interval steps
         inputs = batch["obs"][:, :-1][:, ::self.role_interval]
-        # t_role = np.ceil(max_t/self.role_interval)
         t_role = inputs.shape[1]
         inputs = [inputs,
                   th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, t_role, -1, -1)]
 
-        # state, obs, action
+        # id, obs
 
         # inputs[0] --> [bs, max_t, n_agents, obs]
         # inputs[1] --> [bs, max_t, n_agents, n_agents]
 
-        # one hot encoded position of role + agent + state
         inputs = th.cat([x.reshape(bs, t_role, self.n_agents, -1) for x in inputs], dim=-1)
 
         return inputs  # [bs, max_t, n_agents, n_agents + n_obs]
@@ -108,3 +116,5 @@ class MASAJRoleCritic(nn.Module):
         input_shape = scheme["obs"]["vshape"]
         input_shape += self.n_agents
         return input_shape  # [n_agents + n_obs]
+
+

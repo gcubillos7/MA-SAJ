@@ -13,14 +13,18 @@ class ValueNet(nn.Module):
         # obs + n_agents
         obs_shape = self._get_input_shape(scheme)
         self.input_shape = obs_shape
+        
         if args.obs_role:
-            self.input_shape += args.n_roles
+            if args.use_role_latent:
+                self.input_shape += args.action_latent_dim
+            else:
+                self.input_shape += args.n_roles 
         self.output_type = "v"
 
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(self.input_shape, self.args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(self.args.rnn_hidden_dim, self.args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(self.args.rnn_hidden_dim, 1)
 
     def forward(self, inputs):
         x = F.relu(self.fc1(inputs))
