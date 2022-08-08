@@ -21,17 +21,16 @@ class DecayThenFlatSchedule():
         self.start_t = 0
 
         if self.decay in ["exp"]:
-            self.exp_scaling = (-1) * self.time_length / np.log(self.finish) if self.finish > 0 else 1
+            self.exp_scaling = (-1) * self.time_length / np.log(self.finish/self.start) if self.finish > 0 else 1
 
     def eval(self, T):
-        if T > self.role_action_spaces_update_start and self.reset:
-            self.reset = False
-            self.time_length = self.time_length_exp
-            self.delta = (self.start - self.finish) / self.time_length
-            self.start_t = T
+        # if T > self.role_action_spaces_update_start and self.reset:
+        #     self.reset = False
+        #     self.time_length = self.time_length_exp
+        #     self.delta = (self.start - self.finish) / self.time_length
+        #     self.start_t = T
 
         if self.decay in ["linear"]:
             return max(self.finish, self.start - self.delta * (T-self.start_t))
         elif self.decay in ["exp"]:
-            return min(self.start, max(self.finish, np.exp(- T / self.exp_scaling)))
-    pass
+            return max(self.finish, self.start * np.exp(- T / self.exp_scaling))
