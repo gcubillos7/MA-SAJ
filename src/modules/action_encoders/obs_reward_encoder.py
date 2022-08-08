@@ -1,9 +1,8 @@
 import torch.nn as nn
-# import torch.nn.functional as F
+import torch.nn.functional as F
 
 import numpy as np
 import torch as th
-
 
 class ObsRewardEncoder(nn.Module):
     def __init__(self, args):
@@ -28,7 +27,8 @@ class ObsRewardEncoder(nn.Module):
 
         self.action_encoder = nn.Sequential(nn.Linear(self.n_actions, args.state_latent_dim * 2),
                                             nn.ReLU(),
-                                            nn.Linear(args.state_latent_dim * 2, args.action_latent_dim))
+                                            nn.Linear(args.state_latent_dim * 2, args.action_latent_dim)
+                                            )
 
         self.reward_decoder_avg = nn.Sequential(
             nn.Linear(args.state_latent_dim + args.action_latent_dim, args.state_latent_dim),
@@ -44,9 +44,8 @@ class ObsRewardEncoder(nn.Module):
         # average
         obs_latent_avg = self.obs_encoder_avg(inputs)
         actions = actions.contiguous().view(-1, self.n_actions)
-
         action_latent_avg = self.action_encoder(actions)
-
+        action_latent_avg = F.normalize(action_latent_avg, dim = -1)
         pred_avg_input = th.cat([obs_latent_avg, action_latent_avg], dim=-1)
         no_pred_avg = self.obs_decoder_avg(pred_avg_input)
         r_pred_avg = self.reward_decoder_avg(pred_avg_input)
@@ -56,6 +55,7 @@ class ObsRewardEncoder(nn.Module):
     def forward(self):
         actions = th.Tensor(np.eye(self.n_actions)).to(self.args.device)
         actions_latent_avg = self.action_encoder(actions)
+        actions_latent_avg = F.normalize(actions_latent_avg, dim = -1)        
         return actions_latent_avg
 
     def other_actions(self, actions):
