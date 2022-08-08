@@ -688,7 +688,7 @@ class MASAJ_Learner:
         # Find Q values of actions and roles according to current policy
         target_act_joint_q, target_role_joint_q = self._get_joint_q_target(target_inputs, inputs_role, states,
                                                                             role_states,next_action, next_role,
-                                                                             next_role_role_encoded, alpha)
+                                                                             next_role_role_encoded, alpha, alpha_role)
 
         # build_td_lambda_targets deals with moving the targets 1 step forward
 
