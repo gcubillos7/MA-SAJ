@@ -1,0 +1,15 @@
+numpy
+scipy
+pyyaml
+matplotlib
+pygame
+torch
+torchvision
+snakeviz
+pytest
+probscale
+imageio
+scikit-learn
+Jinja2
+pymongo
+tensorboard-logger
