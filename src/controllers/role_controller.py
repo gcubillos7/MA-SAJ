@@ -1,5 +1,4 @@
 # from tkinter import N
-import pip
 from modules.agents import REGISTRY as agent_REGISTRY
 from components.action_selectors import REGISTRY as action_REGISTRY
 from modules.action_encoders import REGISTRY as action_encoder_REGISTRY
@@ -9,6 +8,7 @@ from torch.distributions.normal import Normal
 import torch as th
 import numpy as np
 from itertools import cycle
+import matplotlib.pyplot as plt
 
 # import numpy as np
 import copy
@@ -43,9 +43,11 @@ class ROLEMAC:
         self.role_hidden_states = None
         self.selected_roles = None
 
+
         # Role latent and actions representations
-        self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
-        
+        role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+        self._build_role_latent(role_latent)
+
         if not self.continuous_actions:
             self.forward = self._discrete_forward
             self.select_actions = self._select_actions_discrete 
@@ -58,16 +60,18 @@ class ROLEMAC:
             self.select_actions = self._select_actions_continuous 
             self.kl_loss = None
 
-        if getattr(self.args, 'relabeling', False):
-            self.update_pi_buffer = self._buffer_pi
-        else:
-            self.update_pi_buffer = self._no_buffer_pi
-
-
         if getattr(self.args, 'shared_encoder', False):
             self.encoded_actions = self._from_encoder
         else:
             self.encoded_actions = self._from_frozen
+
+    def _build_role_latent(self, role_latent):
+
+        if getattr(self.args, 'add_role_id', False):
+            I = th.eye(self.n_roles, device=self.args.device)
+            self.role_latent = th.cat([role_latent, I], dim = -1)
+        else:
+            self.role_latent = role_latent
         
     def _from_frozen(self):
         return self.action_repr
@@ -80,6 +84,7 @@ class ROLEMAC:
         with th.no_grad():
             (agent_outputs, _), (_, _) = self.forward(ep_batch, t=t_ep, test_mode=test_mode, t_env=t_env, explore = True)
         selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)     
+        
         return agent_outputs[bs].detach(), selected_roles[bs].detach()
 
     def _select_actions_discrete(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
@@ -156,7 +161,7 @@ class ROLEMAC:
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-            role_pis =  self.softmax_roles(role_outputs, batch_size, test_mode = test_mode)
+            role_pis =  self._softmax_roles(role_outputs, batch_size, test_mode = test_mode)
             # Get Index of the role of each agent
             selected_roles, log_p_role = self.role_selector.select_role(role_pis, test_mode=test_mode,
                                                                         t_env=t_env)
@@ -188,9 +193,6 @@ class ROLEMAC:
             log_p_action.append(log_p_action_taken)
             kl_loss.append(dkl_loss)
 
-        # Create a buffer for relabeling (only when relabeling is enabled)
-        self.update_pi_buffer(log_p_action_taken) # [batch_size, self.n_agents, self.n_actions, n_roles]
-
         kl_loss = th.stack(kl_loss, dim=-1)  # [bs*n_agents, n_roles]
         kl_loss = kl_loss.view(batch_size * self.n_agents, -1)
         kl_loss = kl_loss.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
@@ -221,9 +223,6 @@ class ROLEMAC:
             pi.append(pi_out)
 
         pi = th.stack(pi, dim=-1)  
-
-        # Create a buffer for relabeling (only when relabeling is enabled)
-        self.update_pi_buffer(pi, t_env) # [batch_size, self.n_agents, self.n_actions, n_roles]
 
         pi = pi.view(batch_size * self.n_agents, self.n_actions,
                      -1)  # [batch_size*self.n_agents*self.n_actions, n_roles]
@@ -280,59 +279,6 @@ class ROLEMAC:
                 agent_outs[reshaped_avail_actions == 0] = 0.0
             
         return agent_outs.view(batch_size, self.n_agents, -1)
-
-    def get_role_probs_discrete(self, ep_batch, t, t_env = None, test_mode = False, explore = True):
-        batch_size = ep_batch.batch_size
-        avail_actions = ep_batch["avail_actions"][:, t]
-        old_action = ep_batch["actions"][:, t]
-        old_action = old_action.reshape(batch_size * self.n_agents, 1 , -1)
-
-        pi = self.pi_buffer
-        pi = pi.transpose(-1, -2).view(batch_size * self.n_agents, self.n_roles, self.n_actions)  # [batch_size* n_agents, n_roles, n_actions]
-
-        # [batch_size* n_agents, n_actions, n_roles]
-        role_avail_actions = self.role_action_spaces.unsqueeze(0).expand(batch_size * self.n_agents, -1, -1)
-
-        pi[role_avail_actions == 0] = -1e11
-
-        # Apply mask and softmax
-        if getattr(self.args, "mask_before_softmax", True):
-            # avail_actions [bs, n_agents, n_actions, n_roles]
-            v_avail_actions = avail_actions.reshape(batch_size * self.n_agents, self.n_actions)
-            v_avail_actions = v_avail_actions.unsqueeze(1).expand(batch_size * self.n_agents, self.n_roles, self.n_actions)
-            # Make the logits for unavailable actions very negative to minimize their affect on the softmax
-            pi[v_avail_actions == 0] = -1e11
-        
-        pi = F.softmax(pi, dim= -1) # softmax over actions
-
-        if (not test_mode) and explore:
-            # Epsilon floor
-            epsilon_action_num = pi.size(-1)
-
-            if getattr(self.args, "mask_before_softmax", True):
-                # With probability epsilon, we will pick an available action uniformly
-                epsilon_action_num = v_avail_actions.sum(dim= -1, keepdim=True).float()
-
-            pi = ((1 - self.action_selector.epsilon) * pi
-                          + th.ones_like(pi) * self.action_selector.epsilon / epsilon_action_num)
-
-            if getattr(self.args, "mask_before_softmax", True):
-                # Zero out the unavailable actions
-                pi[v_avail_actions == 0] = 0.0  
-        
-        # old_action -> bs, n_agents, -1, -1
-        pi_old = th.gather(pi, index = old_action.expand(-1, self.n_roles, self.n_actions), dim = -1)
-        pi_old = pi_old[..., 0]
-
-        return pi_old.view(batch_size, self.n_agents, self.n_roles)
-
-    def _buffer_pi(self, pi, t_env):
-        # only buffer during training (t_env is None)
-        if t_env == None:
-            self.pi_buffer = pi.detach() # .clone() 
-
-    def _no_buffer_pi(self, pi, t_env): 
-        pass
 
     def update_prior(self, role_i, mu, sigma):
         prior = Normal(mu, sigma)
@@ -396,6 +342,7 @@ class ROLEMAC:
             inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1))
 
         inputs = th.cat([x.reshape(bs*self.n_agents, -1) for x in inputs], dim=1)
+
         return inputs
 
     def _get_input_shape(self, scheme):
@@ -422,55 +369,100 @@ class ROLEMAC:
         https://github.com/TonghanWang/RODE
         (SC2 Only)
         """
-
+        
         action_repr = self.action_encoder()
         action_repr_array = action_repr.detach().cpu().numpy()  # [n_actions, action_latent_d]
+        
+        _ , latent_dim = action_repr_array.shape
+        if self.args.verbose:
+            if latent_dim == 2:
+                
+                fig, ax = plt.subplots()
+                for i, _ in enumerate(action_repr_array):
+                    ax.scatter(action_repr_array[i, 0],action_repr_array[i,1], color=color) 
+                    ax.annotate(str(i), (action_repr_array[i, 0],action_repr_array[i,1]) , color='k')
+                ax.set_xlabel('X')
+                ax.set_ylabel('Y')
+                ax.set_zlabel('Z')
+
+                plt.savefig('latent_space.pdf')
+                plt.show()    
+
+            elif latent_dim == 3:
+                fig = plt.figure()
+                ax = fig.add_subplot(projection='3d')
+
+                xs = action_repr_array[:, 0]
+                ys = action_repr_array[:, 1]
+                zs = action_repr_array[:, 2]
+
+
+                for i in range(len(action_repr_array)): #plot each point + it's index as text above
+                    if i<=6:
+                        color = 'g'
+                    else:
+                        color = 'b'  
+                    ax.scatter(xs[i],ys[i],zs[i], color=color) 
+                    ax.text(xs[i],ys[i],zs[i],  '%s' % (str(i)), size=20, zorder=1,  
+                    color='k') 
+
+                ax.set_xlabel('X')
+                ax.set_ylabel('Y')
+                ax.set_zlabel('Z')    
+                plt.savefig('latent_space.pdf')
+                plt.show()
+
 
         n_roles = 1
         add_clusters = 0
-        while n_roles < self.n_roles:
-            print(self.n_clusters + add_clusters, n_roles)
-            k_means = KMeans(n_clusters=self.n_clusters + add_clusters, random_state=0).fit(action_repr_array)
+        min_roles = 2
+        while n_roles < min_roles:
+            
+            n_clusters = self.n_clusters + add_clusters
+            k_means = KMeans(n_clusters = n_clusters, random_state=0).fit(action_repr_array)
+
             spaces = []
-            for cluster_i in range(self.n_clusters):
+            for cluster_i in range(n_clusters):
                 spaces.append((k_means.labels_ == cluster_i).astype(np.float))
+            
+            # sort by number of actions
+            spaces = sorted(spaces, key = lambda x: x.sum())
+            o_spaces = copy.deepcopy(np.stack(spaces))
 
-            o_spaces = copy.deepcopy(spaces)
+
             spaces = []
-
-            for space_i ,space in enumerate(o_spaces):
+            for space_i in range(len(o_spaces)):
+                space = o_spaces[space_i]
                 _space = copy.deepcopy(space)
-                _space[0] = 0.
-                _space[1] = 0.
+                _space[0] = 0
+                _space[1] = 0
 
-                # Add outliers to every tole
-                if _space.sum() <= 1.:
-                    o_spaces = np.minimum(o_spaces[space_i] + o_spaces, 1.0)   
-                elif _space[:6].sum() >= 2. and _space[6:].sum() >= 1.: 
+                # Add outliers to every role
+                if (_space[6:].sum() <= 1.) or (_space[:6].sum() <= 1.):
+                    o_spaces = np.minimum(o_spaces[space_i] + o_spaces, 1.) # add to all spaces
+                # Add non outliers
+                elif (_space[6:].sum() >= 2. and _space[:6].sum() >= 1.): 
                     spaces.append(o_spaces[space_i])
+                # Sometimes actions are not available so if there aren't enough moving actions we allow all movement
                 else:
                     _space[:6] = 1.
                     spaces.append(_space)
 
-            # Allow idling while dead
+            # Allow noop and stop
             for space in spaces:
                 space[0] = 1.
+                space[1] = 1.
 
+            # Filter repeated spaces
             spaces = np.unique(spaces, axis=0)
             spaces = list(spaces)
             n_roles = len(spaces)
 
-            if n_roles < self.n_roles:
-                spaces.append(np.ones_like(spaces[0]))
-            n_roles = len(spaces)  
-
+            print('n_clusters', n_clusters, n_roles)
             add_clusters += 1
-            
-            
-        cyclic_spaces = cycle(spaces)
         
         while n_roles < self.n_roles:
-            spaces.append(next(cyclic_spaces)) 
+            spaces.append(np.ones_like(spaces[0])) 
             n_roles += 1
 
         # use role latent as the critic input and make role Q output 1 dimensional 
@@ -483,7 +475,7 @@ class ROLEMAC:
                 cyclic_roles = cycle(reversed(range(self.n_roles))) # cycle from smaller to bigger spaces
                 for small_space in sorted_spaces[self.n_roles:]:
                     i = next(cyclic_roles)
-                    # combine the smallest spaces
+                    # combine the smallest spaces first
                     space_comb = np.minimum(sorted_spaces[i] + small_space, 1)  
                     sorted_spaces[i] = space_comb
                 spaces = sorted_spaces[:self.n_roles]
@@ -496,6 +488,7 @@ class ROLEMAC:
                             self.roles[-1].cuda()
                 # Sort spaces by length (make existing roles be used for bigger spaces)
                 spaces = sorted_spaces = sorted(spaces, key = lambda x: -x.sum())
+
         n_roles = len(spaces)
         self.n_roles = n_roles 
 
@@ -506,14 +499,19 @@ class ROLEMAC:
 
         self.role_action_spaces = th.Tensor(np.array(spaces)).to(self.args.device).float()  # [n_roles, n_actions]
         
-        self.role_latent = th.matmul(self.role_action_spaces, action_repr) / self.role_action_spaces.sum(dim=-1,
-                                                                                                         keepdim=True)
-        self.role_latent = self.role_latent.detach().clone()
+        role_latent = th.matmul(self.role_action_spaces, action_repr) / self.role_action_spaces.sum(dim=-1, keepdim=True)
+        role_latent = role_latent.detach().clone()
+
+        self._build_role_latent(role_latent)
+        
         self.action_repr = action_repr.detach().clone()
         self.encoded_actions = self._from_frozen
+
+        print(role_latent)
         print(th.max(self.action_repr), th.min(self.action_repr))
         print(th.max(self.role_latent), th.min(self.role_latent))
         print(th.max(self.encoded_actions()), th.min(self.encoded_actions()))
+
 
     def cuda(self):
         self.agent.cuda()

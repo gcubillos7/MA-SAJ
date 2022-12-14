@@ -11,10 +11,14 @@ class MultinomialRoleSelector(nn.Module):
     def __init__(self, input_shape, args):
         super(MultinomialRoleSelector, self).__init__()
         self.args = args
+        if getattr(self.args, 'add_role_id', False):
+            role_latent_dim = args.n_roles + args.action_latent_dim
+        else:
+            role_latent_dim = args.action_latent_dim
 
-        self.fc = nn.Sequential(nn.Linear(args.rnn_hidden_dim, 2 * args.rnn_hidden_dim),
+        self.fc = nn.Sequential(nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim),
                                             nn.ReLU(),
-                                            nn.Linear(2 * args.rnn_hidden_dim, args.action_latent_dim))
+                                            nn.Linear(args.rnn_hidden_dim, role_latent_dim))
 
         self.schedule = DecayThenFlatSchedule(args.epsilon_start,
                                               args.epsilon_finish,
@@ -42,7 +46,7 @@ class MultinomialRoleSelector(nn.Module):
     def forward(self, inputs, role_latent):
         dot = self.dot_product(inputs, role_latent)
 
-        return dot  # logits # TODO: logp = log softmax(logits)
+        return dot  # logits
 
     def select_role(self, role_pis, t_env, test_mode=False):
         # role_pis [bs*n_agents, n_roles] 
@@ -73,11 +77,14 @@ class DotSelector(nn.Module):
         self.role_action_spaces_update_start = self.args.role_action_spaces_update_start
         self.epsilon_start_t = 0
         self.epsilon_reset = True
+        
+        if getattr(self.args, 'add_role_id', False):
+            role_latent_dim = args.action_latent_dim + args.n_roles
+        else:
+            role_latent_dim = args.action_latent_dim
 
         self.fc1 = nn.Linear(args.rnn_hidden_dim, 2 * args.rnn_hidden_dim)
-        self.fc2 = nn.Linear(2 * args.rnn_hidden_dim, args.action_latent_dim)
-
-        self.epsilon = 0.05
+        self.fc2 = nn.Linear(2 * args.rnn_hidden_dim, role_latent_dim)
 
     def forward(self, inputs, role_latent):
         x = self.fc2(F.relu(self.fc1(inputs)))  # [bs, action_dim] [n_roles, action_dim] (bs may be bs*n_agents)
@@ -106,6 +113,7 @@ class DotSelector(nn.Module):
         return picked_roles
 
     def epsilon_schedule(self, t_env):
+
         if t_env is None:
             return 0.05
 

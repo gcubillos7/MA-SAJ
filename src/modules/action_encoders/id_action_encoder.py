@@ -10,9 +10,8 @@ class ObsRewardEncoder(nn.Module):
         self.args = args
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
-        self.mixing_embed_dim = args.mixing_embed_dim
         self.action_latent_dim = args.action_latent_dim
-        self.normalize = getattr(args, "normalize", False)
+
         self.state_dim = int(np.prod(args.state_shape))
         self.obs_dim = int(np.prod(args.obs_shape))
 
@@ -25,7 +24,7 @@ class ObsRewardEncoder(nn.Module):
             nn.ReLU(),
             nn.Linear(args.state_latent_dim, self.obs_dim))
 
-        self.action_encoder = nn.Sequential(nn.Linear(self.n_actions, args.state_latent_dim * 2),
+        self.action_encoder = nn.Sequential(nn.Linear(self.n_actions + self.n_agents, args.state_latent_dim * 2),
                                             nn.ReLU(),
                                             nn.Linear(args.state_latent_dim * 2, args.action_latent_dim)
                                             )
@@ -45,8 +44,7 @@ class ObsRewardEncoder(nn.Module):
         obs_latent_avg = self.obs_encoder_avg(inputs)
         actions = actions.contiguous().view(-1, self.n_actions)
         action_latent_avg = self.action_encoder(actions)
-        if self.normalize:
-            action_latent_avg = F.normalize(action_latent_avg, dim = -1)
+        action_latent_avg = F.normalize(action_latent_avg, dim = -1)
         pred_avg_input = th.cat([obs_latent_avg, action_latent_avg], dim=-1)
         no_pred_avg = self.obs_decoder_avg(pred_avg_input)
         r_pred_avg = self.reward_decoder_avg(pred_avg_input)
@@ -56,9 +54,7 @@ class ObsRewardEncoder(nn.Module):
     def forward(self):
         actions = th.Tensor(np.eye(self.n_actions)).to(self.args.device)
         actions_latent_avg = self.action_encoder(actions)
-        if self.normalize:
-            actions_latent_avg = F.normalize(actions_latent_avg, dim = -1)       
-
+        actions_latent_avg = F.normalize(actions_latent_avg, dim = -1)        
         return actions_latent_avg
 
     def other_actions(self, actions):
@@ -73,6 +69,24 @@ class ObsRewardEncoder(nn.Module):
                     _other_actions.append(actions[:, j])
             _other_actions = th.cat(_other_actions, dim=-1)
             other_actions.append(_other_actions)
-        
+
         other_actions = th.stack(other_actions, dim=1).contiguous().view(-1, (self.n_agents - 1) * self.n_actions)
         return other_actions
+    
+    def _build_inputs(self, batch, t):
+        # Assumes homogenous agents with flat observations.
+        # Other MACs might want to e.g. delegate building inputs to each agent
+        bs = batch.batch_size
+        inputs = []
+        inputs.append(batch["obs"][:, t])  # b1av
+        if self.args.obs_last_action:
+            if t == 0:
+                inputs.append(th.zeros_like(batch["actions_onehot"][:, t]))
+            else:
+                inputs.append(batch["actions_onehot"][:, t-1])
+        if self.args.obs_agent_id:
+            inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1))
+
+        inputs = th.cat([x.reshape(bs*self.n_agents, -1) for x in inputs], dim=1)
+
+        return inputs

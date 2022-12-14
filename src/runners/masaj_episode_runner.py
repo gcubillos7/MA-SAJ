@@ -6,6 +6,11 @@ from components.episode_buffer import EpisodeBatch
 import numpy as np
 import copy
 
+import matplotlib.pyplot as plt
+import os
+import shutil
+import logging
+
 class EpisodeRunner:
 
     def __init__(self, args, logger):
@@ -36,7 +41,7 @@ class EpisodeRunner:
         # Log the first run
         self.log_train_stats_t = -1000000
         self.step: Callable = self.step_particle if self.args.env in ["particle"] else self.step_default 
-    
+        self.verbose = args.verbose
     def setup(self, scheme, groups, preprocess, mac):
         self.new_batch = partial(EpisodeBatch, scheme, groups, self.batch_size, self.episode_limit + 1,
                                  preprocess=preprocess, device=self.args.device)
@@ -90,12 +95,28 @@ class EpisodeRunner:
         reward, terminated, env_info = self.env.step(actions)
         return reward, terminated, env_info
         
-    def run(self, test_mode=False):
+    def run(self, test_mode=False, t_episode=0):
         self.reset()
 
         terminated = False
         episode_return = 0
         self.mac.init_hidden(batch_size=self.batch_size)
+
+        replay_data = []
+        if self.verbose:
+            if t_episode < 2:
+                save_path = os.path.join(self.args.local_results_path,
+                                         "pic_replays",
+                                         self.args.unique_token,
+                                         str(t_episode))
+                if os.path.exists(save_path):
+                    shutil.rmtree(save_path)
+                os.makedirs(save_path)
+                role_color = np.array(['r', 'y', 'b', 'c', 'm', 'g'])
+                print(self.mac.role_action_spaces.detach().cpu().numpy())
+                logging.getLogger('matplotlib.font_manager').disabled = True
+            all_roles = []
+
 
         while not terminated:
             pre_transition_data = {
@@ -103,6 +124,11 @@ class EpisodeRunner:
                 "avail_actions": [self.env.get_avail_actions()],
                 "obs": [self.env.get_obs()]
             }
+
+            if self.verbose:
+                # These outputs are designed for SMAC
+                ally_info, enemy_info = self.env.get_structured_state()
+                replay_data.append([ally_info, enemy_info])
 
             self.batch.update(pre_transition_data, ts=self.t)
 
@@ -116,6 +142,47 @@ class EpisodeRunner:
             post_transition_data["reward"] = [(reward,)]
             post_transition_data["terminated"] = [(terminated != env_info.get("episode_limit", False),)]                                    
             self.batch.update(post_transition_data, ts=self.t)
+            
+            if self.verbose:
+                roles = post_transition_data['roles']
+                roles_detach = roles.detach().cpu().squeeze().numpy()
+                ally_info = replay_data[-1][0]
+                p_roles = np.where(ally_info['health'] > 0, roles_detach,
+                                   np.array([-5 for _ in range(self.args.n_agents)]))
+
+                all_roles.append(copy.deepcopy(p_roles))
+
+                if t_episode < 2:
+                    figure = plt.figure()
+
+                    print(self.t, p_roles)
+                    ally_health = ally_info['health']
+                    ally_health_max = ally_info['health_max']
+                    if 'shield' in ally_info.keys():
+                        ally_health += ally_info['shield']
+                        ally_health_max += ally_info['shield_max']
+                    ally_health_status = ally_health / ally_health_max
+                    plt.scatter(ally_info['x'], ally_info['y'], s=20*ally_health_status, c=role_color[roles_detach])
+                    for agent_i in range(self.args.n_agents):
+                        plt.text(ally_info['x'][agent_i], ally_info['y'][agent_i], '{:d}'.format(agent_i+1), c='y')
+
+                    enemy_info = replay_data[-1][1]
+                    enemy_health = enemy_info['health']
+                    enemy_health_max = enemy_info['health_max']
+                    if 'shield' in enemy_info.keys():
+                        enemy_health += enemy_info['shield']
+                        enemy_health_max += enemy_info['shield_max']
+                    enemy_health_status = enemy_health / enemy_health_max
+                    plt.scatter(enemy_info['x'], enemy_info['y'], s=20*enemy_health_status, c='k')
+                    for enemy_i in range(len(enemy_info['x'])):
+                        plt.text(enemy_info['x'][enemy_i], enemy_info['y'][enemy_i], '{:d}'.format(enemy_i+1))
+
+                    plt.xlim(0, 32)
+                    plt.ylim(0, 32)
+                    plt.title('t={:d}'.format(self.t))
+                    pic_name = os.path.join(save_path, str(self.t) + '.png')
+                    plt.savefig(pic_name)
+                    plt.close()            
             self.t += 1
 
         last_data = {
@@ -133,6 +200,7 @@ class EpisodeRunner:
         post_transition_data["terminated"] = [(terminated != env_info.get("episode_limit", False),)]                                    
 
         self.batch.update({"actions": actions}, ts=self.t)
+
 
         cur_stats = self.test_stats if test_mode else self.train_stats
         cur_returns = self.test_returns if test_mode else self.train_returns
@@ -153,7 +221,10 @@ class EpisodeRunner:
             if hasattr(self.mac.action_selector, "epsilon"):
                 self.logger.log_stat("epsilon", self.mac.action_selector.epsilon, self.t_env)
             self.log_train_stats_t = self.t_env
-
+        
+        if self.verbose:
+            return self.batch, np.array(all_roles)
+        
         return self.batch
 
     def _log(self, returns, stats, prefix):

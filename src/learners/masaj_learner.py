@@ -7,7 +7,7 @@ from components.episode_buffer import EpisodeBatch
 from modules.critics.masaj import MASAJCritic, MASAJRoleCritic
 from modules.mixers.fop import FOPMixer
 from utils.rl_utils import build_td_lambda_targets, polyak_update
-from torch.optim import RMSprop, Adam
+from torch.optim import RMSprop
 from modules.critics.value import ValueNet, RoleValueNet
 from components.epsilon_schedules import DecayThenFlatSchedule
 
@@ -114,30 +114,34 @@ class MASAJ_Learner:
         self.action_encoder_optimizer = RMSprop(params=self.action_encoder_params, lr=args.lr,
                                                 alpha=args.optim_alpha, eps=args.optim_eps)
 
-        # Relabeling 
-        self.relabeling = getattr(args, 'relabeling', False)
-
         # Build the entropy schedule                             
         self._build_ent_coefficient(args)
+
+        if getattr(args, 'use_role_alpha', True):
+            self.get_alpha_role = self.get_alpha
+        else:
+            self.alpha_role = getattr(self.args, "alpha_finish", 0.05)
+            self.get_alpha_role = lambda t: self.alpha_role
 
         if self.use_role_latent:
             self.role_embedding =  th.nn.Embedding.from_pretrained(self.mac.role_latent)
             self._encode_roles = self._get_role_embedding 
         else:
             self._encode_roles = self._get_role_one_hot
-
+    
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
 
         self.train_encoder(batch, t_env, episode_num)
         alpha = self.get_alpha(t_env)
-        self.train_critic(batch, t_env, alpha)
-        self.train_actor(batch, t_env, alpha)
+        role_alpha = self.get_alpha_role(t_env)
+        self.train_critic(batch, t_env, alpha, role_alpha)
+        self.train_actor(batch, t_env, alpha, role_alpha)
 
         if (episode_num - self.last_target_update_episode) / self.args.target_update_interval >= 1.0:
             self._update_targets()
             self.last_target_update_episode = episode_num
 
-    def _get_policy_discrete(self, batch, avail_actions, test_mode=False, explore = True, relabeling = False):
+    def _get_policy_discrete(self, batch, avail_actions, test_mode=False, explore = True):
         """
         Returns
         mac_out: returns distribution of actions .log_p(actions)
@@ -151,11 +155,6 @@ class MASAJ_Learner:
         role_taken = []
         log_p_role = []
         role_avail_actions = []
-        # add relabeling vars:
-        if relabeling:
-            role_probs = [] 
-            role_p = th.ones((batch.batch_size, self.n_agents, self.n_roles), device = self.device, dtype = th.float)
-
         self.mac.init_hidden(batch.batch_size)
         for t in range(batch.max_seq_length):
             # policy outputs
@@ -163,35 +162,18 @@ class MASAJ_Learner:
             role_avail_actions.append(self.mac.role_avail_actions)
             mac_out.append(agent_outs[0])
 
-            # get sequence probas
-            if relabeling:
-                action_taken_probs = self.mac.get_role_probs_discrete(batch, t, test_mode = test_mode, explore = explore) 
-                role_p *= action_taken_probs
-
             # role_output every self.role_interval
             if t % self.role_interval == 0 and (t < batch.max_seq_length - 1):  # role out skips last element
                 log_p_role.append(role_outs[1])
                 role_taken.append(role_outs[0])
-                if relabeling:
-                    # get probabilities of each sequence for each role
-                    role_probs.append(role_p.clone())
-                    # reset sequence probability
-                    role_p = th.ones((batch.batch_size, self.n_agents, self.n_roles), device = self.device, dtype = th.float)
-                
+
         role_taken, log_p_role = th.stack(role_taken, dim=1), th.stack(log_p_role, dim=1)
 
         if self.use_role_value:
             log_p_role = th.gather(log_p_role, dim=-1, index= role_taken.expand(log_p_role.shape))
             log_p_role = log_p_role[..., 0]
             
-        if relabeling:
-            # relabel using probabilities
-            role_probs = th.stack(role_probs, dim=1)
-            role_probs = th.softmax(role_probs, dim = -1)
-            relabeled_old_role = Categorical(role_probs).sample().long() # relabeled role given actions
-            mac_role_out = (role_taken, log_p_role, relabeled_old_role.unsqueeze(-1))  # [...], [...], [...]  
-        else:
-            mac_role_out = (role_taken, log_p_role)  # [...], [...]
+        mac_role_out = (role_taken, log_p_role)  # [...], [...]
             
         pi_act = th.stack(mac_out, dim=1)
 
@@ -209,7 +191,7 @@ class MASAJ_Learner:
 
         return mac_out, mac_role_out        
 
-    def _get_policy_continuous(self,batch, avail_actions, test_mode=False, explore = True, relabeling = False):
+    def _get_policy_continuous(self,batch, avail_actions, test_mode=False, explore = True):
         """
         Returns
         mac_out: returns distribution of actions .log_p(actions)
@@ -220,43 +202,19 @@ class MASAJ_Learner:
         log_p_out = []
         role_taken = []
         log_p_role = []
-        # add relabeling vars:
-        if relabeling:
-            role_probs = [] 
-            role_p = th.ones((batch.batch_size, self.n_agents, self.n_roles), device = self.device, dtype = th.float)
-        
         self.mac.init_hidden(batch.batch_size)
         for t in range(batch.max_seq_length):
             agent_outs, role_outs = self.mac.forward(batch, t=t, test_mode=test_mode, explore = explore)
             mac_out.append(agent_outs[0])
             log_p_out.append(agent_outs[1])
-
-            # get sequence probas
-            if relabeling:
-                with th.no_grad:
-                    action_taken_probs = self.mac.get_role_probs_discrete(batch, t, test_mode = test_mode, explore = explore) 
-                    role_p *= action_taken_probs
-
             # role_output every self.role_interval
             if t % self.role_interval == 0 and (t < batch.max_seq_length - 1):  # role out skips last element
                 log_p_role.append(role_outs[1])
                 role_taken.append(role_outs[0])
-                if relabeling:
-                    # get probabilities of each sequence for each role
-                    role_probs.append(role_p.clone())
-                    # reset sequence probability
-                    role_p = th.ones((batch.batch_size, self.n_agents, self.n_roles), device = self.device, dtype = th.float)
 
         log_p_role = th.stack(log_p_role, dim=1)      
 
-        if relabeling:
-            # relabel using probabilities
-            role_probs = th.stack(role_probs, dim=1)
-            role_probs = th.softmax(role_probs, dim = -1)
-            relabeled_old_role = Categorical(role_probs).sample().long() # relabeled role given actions
-            mac_role_out = (role_taken, log_p_role, relabeled_old_role)  # [...], [...], [...]  
-        else:
-            mac_role_out = (role_taken, log_p_role)  # [...], [...]
+        mac_role_out = (role_taken, log_p_role)  # [...], [...]
 
         if self.use_role_value:
             log_p_role = th.gather(log_p_role, dim=-1, index=role_taken.expand(log_p_role.shape))
@@ -388,26 +346,28 @@ class MASAJ_Learner:
         """
         Get flattened individual Q values
         """
-        with th.no_grad():
-            # Get Q values
-            if self.continuous_actions:
-                action_input = action
-                q_vals1 = self.critic1.forward(inputs, action_input)
-                q_vals2 = self.critic2.forward(inputs, action_input)
-                q_vals = th.min(q_vals1, q_vals2)
-                q_vals = q_vals.view(-1)
-            else:
+        
+        # Get Q values
+        if self.continuous_actions:
+            action_input = action
+            q_vals1 = self.critic1.forward(inputs, action_input)
+            q_vals2 = self.critic2.forward(inputs, action_input)
+            q_vals = th.min(q_vals1, q_vals2)
+            q_vals = q_vals.view(-1)
+        else:
+            with th.no_grad():
                 q_vals1 = self.critic1.forward(inputs)
                 q_vals2 = self.critic2.forward(inputs)
                 q_vals = th.min(q_vals1, q_vals2)
                 q_vals = q_vals.view(-1, self.n_actions)
 
-            if self.use_role_value:
-                q_vals1_role = self.role_critic1.forward(inputs_role, role_encoded)
-                q_vals2_role = self.role_critic2.forward(inputs_role, role_encoded)
-                q_vals_role = th.min(q_vals1_role, q_vals2_role)
-                q_vals_role = q_vals_role.view(-1)
-            else:
+        if self.use_role_value:
+            q_vals1_role = self.role_critic1.forward(inputs_role, role_encoded)
+            q_vals2_role = self.role_critic2.forward(inputs_role, role_encoded)
+            q_vals_role = th.min(q_vals1_role, q_vals2_role)
+            q_vals_role = q_vals_role.view(-1)
+        else:
+            with th.no_grad():
                 q_vals1_role = self.role_critic1.forward(inputs_role)
                 q_vals2_role = self.role_critic2.forward(inputs_role)
                 q_vals_role = th.min(q_vals1_role, q_vals2_role)
@@ -478,7 +438,7 @@ class MASAJ_Learner:
     def train_decoder(self, batch, t_env):
         raise NotImplementedError
 
-    def train_actor(self, batch, t_env, alpha):
+    def train_actor(self, batch, t_env, alpha, alpha_role):
         """
         Update actor and value nets as in SAC (Haarjona)
         https://github.com/haarnoja/sac/blob/master/sac/algos/sac.py  
@@ -561,7 +521,7 @@ class MASAJ_Learner:
         
         # As roles are discrete we don't really need a value net as we can estimate V directly
         # but we can't extend the numbers of roles easily if we do this
-        alpha_role = alpha
+        
         if self.use_role_value:
             # Move V towards Q
             v_role = self.role_value(inputs_role).reshape(-1)
@@ -610,7 +570,7 @@ class MASAJ_Learner:
             self.logger.log_stat("role_entropy", role_entropies, t_env)
             self.log_stats_t = t_env
     
-    def train_critic(self, batch, t_env, alpha):
+    def train_critic(self, batch, t_env, alpha, alpha_role):
         bs = batch.batch_size
         max_t = batch.max_seq_length
         rewards = batch["reward"][:, :-1]
@@ -621,32 +581,20 @@ class MASAJ_Learner:
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         avail_actions = batch["avail_actions"]
-        alpha_role = alpha 
-        relabeling = (not self.role_action_spaces_updated) and self.relabeling
         with th.no_grad():
             # Sample roles according to current policy and get their log probabilities
-            mac_out, role_out = self._get_policy(batch, avail_actions=avail_actions, explore = True, test_mode = False, relabeling = relabeling)
+            mac_out, role_out = self._get_policy(batch, avail_actions=avail_actions, explore = True, test_mode = False)
         # encode roles if necessary
 
         role_rewards, role_states, role_terminated, role_mask = self._build_role_rollout(rewards, states[:, :-1], terminated, mask)                                                                                          
         
-        
-
-        if relabeling:
-            relabeled_old_role = role_out[2]
-            roles = relabeled_old_role
-            roles_roles_encoded = self._encode_roles(roles.squeeze(-1))
-            roles_encoded = th.zeros(bs, max_t, self.n_agents, self.dim_roles, device = self.device)
-            role_role_encoded_rep = roles_roles_encoded.squeeze(-1).repeat_interleave(self.role_interval, dim = 1)
-            role_t = min(role_role_encoded_rep.shape[1], roles_encoded.shape[1])
-            roles_encoded[:, :role_t] = role_role_encoded_rep[:, :role_t]
+        roles  = roles_taken[:, ::self.role_interval]
+        if self.use_role_latent:
+            roles_encoded = self._encode_roles(batch["roles"].squeeze(-1)) 
         else:
-            roles  = roles_taken[:, ::self.role_interval]
-            if self.use_role_latent:
-                roles_encoded = self._encode_roles(batch["roles"].squeeze(-1)) 
-            else:
-                roles_encoded = batch["roles_onehot"]
-            roles_roles_encoded = roles_encoded[:, :-1][:, ::self.role_interval]
+            roles_encoded = batch["roles_onehot"]
+        roles_roles_encoded = roles_encoded[:, :-1][:, ::self.role_interval]
+
         # select action
         # get log p of actions
         next_role, log_p_role = role_out[0], role_out[1]

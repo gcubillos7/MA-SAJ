@@ -11,8 +11,12 @@ import torch as th
 from utils.logging import get_logger
 import yaml
 from run import run
+
+print("amogus")
+
 # Debug
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 # (default: ‘fd’ (linux/osx) or ‘sys’ (windows)) configure how stdout/stderr are captured. [‘no’, ‘sys’, ‘fd’]
 if sys.platform == "linux":
     SETTINGS['CAPTURE_MODE'] = "fd" 
@@ -26,7 +30,6 @@ ex.logger = logger
 ex.captured_out_filter = apply_backspaces_and_linefeeds
 
 results_path = os.path.join(dirname(dirname(abspath(__file__))), "results")
-
 
 @ex.main
 def my_main(_run, _config, _log):

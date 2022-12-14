@@ -3,8 +3,6 @@ scipy
 pyyaml
 matplotlib
 pygame
-torch
-torchvision
 snakeviz
 pytest
 probscale
@@ -13,3 +11,5 @@ scikit-learn
 Jinja2
 pymongo
 tensorboard-logger
+matplotlib
+gym

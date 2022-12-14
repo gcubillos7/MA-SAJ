@@ -57,3 +57,10 @@ def zip_strict(*iterables: Iterable) -> Iterable:
         if sentinel in combo:
             raise ValueError("Iterables have different lengths")
         yield combo
+
+
+def mask_logits(self, logits, mask):
+    mask_value = th.tensor(
+                th.finfo(logits.dtype).min, dtype=logits.dtype)
+
+    return th.where(self.mask, logits, mask_value)

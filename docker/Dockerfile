@@ -1,4 +1,5 @@
-FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
+# FROM nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04
+FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu18.04
 
 ENV CUDA_PATH /usr/local/cuda
 ENV CUDA_INCLUDE_PATH /usr/local/cuda/include
@@ -16,17 +17,20 @@ RUN apt-get update -y && apt-get install -y curl libssl-dev openssl libopenblas-
 
 
 RUN apt-get update
+RUN apt-get install dos2unix
 RUN add-apt-repository ppa:deadsnakes/ppa -y
-RUN apt-get update && apt-get install -y python3.6 python3.6-dev
+RUN apt-get update && apt-get install -y  python3.6-dev
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.6 2
 RUN apt-get install -y python3-pip
 RUN pip3 install --upgrade pip
 RUN apt-get install -y python-apt --reinstall
 
-#WORKDIR /
+WORKDIR /
 
 COPY ../requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt
+RUN pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
+#RUN pip3 install torch torchvision
 
 RUN mkdir /install
 WORKDIR /install
@@ -53,7 +57,9 @@ COPY .. /home/user/pymarl
 
 EXPOSE 8888
 WORKDIR /home/user/pymarl
-
-
+# Modify enviorement (same as RODE)
+COPY /env /env/lib/python3.6/site-packages/smac/env
+RUN dos2unix install_sc2.sh
+RUN install_sc2.sh
 #WORKDIR /pymarl
 #CMD line?
